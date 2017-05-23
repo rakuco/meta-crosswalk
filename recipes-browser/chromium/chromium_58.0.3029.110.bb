@@ -13,6 +13,9 @@ SRC_URI += " \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
+INHIBIT_PACKAGE_DEBUG_SPLIT = "1"
+INSANE_SKIP_${PN} += "already-stripped"
+
 # At the moment, this recipe has only been tested on i586, x86-64, ARMv6,
 # ARMv7a and aarch64.
 COMPATIBLE_MACHINE = "(-)"
