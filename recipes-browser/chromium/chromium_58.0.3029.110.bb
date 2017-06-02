@@ -84,7 +84,7 @@ PACKAGECONFIG[proprietary-codecs] = '\
 # testing.
 PACKAGECONFIG[root-profile] = ",,,"
 # webrtc: Whether to build Chromium with support for WebRTC.
-PACKAGECONFIG[webrtc] = "enable_werbtc=true,enable_webrtc=false"
+PACKAGECONFIG[webrtc] = "enable_webrtc=true,enable_webrtc=false"
 
 # The generated debug chrome binary is too big (~5Gb) for 32-bit systems.
 # binutils, file and other utilities are unable to read it correctly and
