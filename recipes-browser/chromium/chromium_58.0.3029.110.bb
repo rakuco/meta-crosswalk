@@ -147,6 +147,10 @@ GN_ARGS += "allow_posix_link_time_opt=false"
 # See https://groups.google.com/a/chromium.org/d/msg/chromium-packagers/ECWC57W7E0k/9Kc5UAmyDAAJ
 GN_ARGS += "fieldtrial_testing_like_official_build=true"
 
+# Enable ozone_gbm
+GN_ARGS += "use_ozone=true"
+GN_ARGS += "ozone_platform_gbm=true"
+
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
 # startup.
@@ -244,7 +248,7 @@ do_configure() {
 }
 
 do_compile() {
-	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox
+	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox ozone_demo
 }
 
 do_install() {
@@ -283,6 +287,8 @@ do_install() {
 
 	install -m 4755 chrome_sandbox ${D}${libdir}/chromium/chrome-sandbox
 	install -m 0755 chrome ${D}${libdir}/chromium/chromium-bin
+	install -m 0755 ozone_demo ${D}${libdir}/chromium
+    install -m 0644 *.so ${D}${libdir}/chromium/
 	install -m 0644 *.bin ${D}${libdir}/chromium/
 	install -m 0644 chrome_*.pak ${D}${libdir}/chromium/
 	install -m 0644 icudtl.dat ${D}${libdir}/chromium/icudtl.dat
