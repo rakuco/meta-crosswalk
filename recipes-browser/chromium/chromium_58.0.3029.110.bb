@@ -248,7 +248,7 @@ do_configure() {
 }
 
 do_compile() {
-	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox ozone_demo
+	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox content_shell ozone_demo
 }
 
 do_install() {
