@@ -25,7 +25,6 @@ COMPATIBLE_MACHINE_x86-64 = "(.*)"
 
 DEPENDS = "\
     alsa-lib \
-    atk \
     bison-native \
     dbus \
     expat \
@@ -35,21 +34,10 @@ DEPENDS = "\
     glib-2.0 \
     gn-native \
     gperf-native \
-    gtk+ \
     harfbuzz \
     jpeg \
     libwebp \
-    libx11 \
-    libxcomposite \
-    libxcursor \
-    libxdamage \
-    libxext \
-    libxfixes \
-    libxi \
     libxml2 \
-    libxrandr \
-    libxrender \
-    libxscrnsaver \
     libxslt \
     libxtst \
     ninja-native \
@@ -151,6 +139,7 @@ GN_ARGS += "fieldtrial_testing_like_official_build=true"
 # Enable ozone_gbm
 GN_ARGS += "use_ozone=true"
 GN_ARGS += "ozone_platform_gbm=true"
+GN_ARGS += "ozone_platform_x11=false"
 
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
