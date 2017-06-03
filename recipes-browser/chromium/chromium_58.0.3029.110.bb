@@ -140,6 +140,7 @@ GN_ARGS += "fieldtrial_testing_like_official_build=true"
 GN_ARGS += "use_ozone=true"
 GN_ARGS += "ozone_platform_gbm=true"
 GN_ARGS += "ozone_platform_x11=false"
+GN_ARGS += "ozone_platform_wayland=false"
 
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
