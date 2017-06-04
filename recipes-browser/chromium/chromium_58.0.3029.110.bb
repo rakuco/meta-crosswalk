@@ -142,6 +142,9 @@ GN_ARGS += "ozone_platform_gbm=true"
 GN_ARGS += "ozone_platform_x11=false"
 GN_ARGS += "ozone_platform_wayland=false"
 
+# Enable ozone-gbm only
+GN_ARGS += "ozone_auto_platforms=false"
+
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
 # startup.
