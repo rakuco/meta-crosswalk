@@ -242,7 +242,7 @@ do_configure() {
 }
 
 do_compile() {
-	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox content_shell ozone_demo
+    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox content_shell ozone_demo gbm_unittests
 }
 
 do_install() {
