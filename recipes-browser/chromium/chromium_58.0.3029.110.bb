@@ -35,6 +35,7 @@ DEPENDS = "\
     gn-native \
     gperf-native \
     harfbuzz \
+    hicolor-icon-theme \
     jpeg \
     libwebp \
     libxml2 \
