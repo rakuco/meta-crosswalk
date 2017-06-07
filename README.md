@@ -58,6 +58,35 @@ Also, you can select a specific target machine as follows: (default: qemux86)
 MACHINE ?= "intel-corei7-64"
 ```
 
+### Update Linux kernel and Mesa recipes
+
+```
+diff --git a/meta-yocto-bsp/recipes-kernel/linux/linux-yocto_4.10.bbappend b/meta-yocto-bsp/recipes-kernel/linux/linux-yocto_4.10.bbappend
+index 6430548..5768bbc 100644
+--- a/meta-yocto-bsp/recipes-kernel/linux/linux-yocto_4.10.bbappend
++++ b/meta-yocto-bsp/recipes-kernel/linux/linux-yocto_4.10.bbappend
+@@ -24,3 +24,5 @@ LINUX_VERSION_genericx86-64 = "4.10.9"
+ LINUX_VERSION_edgerouter = "4.10.9"
+ LINUX_VERSION_beaglebone = "4.10.9"
+ LINUX_VERSION_mpc8315e-rdb = "4.10.9"
++
++SRC_URI += "file:///home/joone/otc/yocto/poky/build/conf/kernel_dma_buf.patch" 
+diff --git a/meta/recipes-graphics/mesa/mesa.inc b/meta/recipes-graphics/mesa/mesa.inc
+index 0348bb2..7d81e1e 100644
+--- a/meta/recipes-graphics/mesa/mesa.inc
++++ b/meta/recipes-graphics/mesa/mesa.inc
+@@ -46,7 +46,7 @@ PACKAGECONFIG[vulkan] = "--with-vulkan-drivers=intel, --without-vulkan-drivers"
+ 
+ PACKAGECONFIG[gles] = "--enable-gles1 --enable-gles2, --disable-gles1 --disable-gles2"
+ 
+-EGL_PLATFORMS  = "drm"
++EGL_PLATFORMS  = "surfaceless"
+ EGL_PLATFORMS .="${@bb.utils.contains('PACKAGECONFIG', 'x11', ',x11', '', d)}"
+ EGL_PLATFORMS .="${@bb.utils.contains('PACKAGECONFIG', 'wayland', ',wayland', '', d)}"
+ PACKAGECONFIG[egl] = "--enable-egl --with-egl-platforms=${EGL_PLATFORMS}, --disable-egl"
+```
+
+```
 Build Chromium and create an image using bitbak command.
 ```
 $ bitbake core-image-base
