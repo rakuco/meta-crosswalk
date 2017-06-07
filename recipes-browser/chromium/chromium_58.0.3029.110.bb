@@ -146,6 +146,10 @@ GN_ARGS += "ozone_platform_wayland=false"
 # Enable ozone-gbm only
 GN_ARGS += "ozone_auto_platforms=false"
 
+# Mash support
+GN_ARGS += "enable_package_mash_services = true"
+
+
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
 # startup.
@@ -243,7 +247,7 @@ do_configure() {
 }
 
 do_compile() {
-    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox content_shell ozone_demo gbm_unittests
+    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox content_shell ozone_demo gbm_unittests mash:all
 }
 
 do_install() {
@@ -283,6 +287,8 @@ do_install() {
 	install -m 4755 chrome_sandbox ${D}${libdir}/chromium/chrome-sandbox
 	install -m 0755 chrome ${D}${libdir}/chromium/chromium-bin
 	install -m 0755 ozone_demo ${D}${libdir}/chromium
+	install -m 0755 mash ${D}${libdir}/chromium
+	install -m 0755 *.service ${D}${libdir}/chromium
     install -m 0644 *.so ${D}${libdir}/chromium/
 	install -m 0644 *.bin ${D}${libdir}/chromium/
 	install -m 0644 chrome_*.pak ${D}${libdir}/chromium/
