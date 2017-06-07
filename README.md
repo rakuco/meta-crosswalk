@@ -6,6 +6,9 @@ This instruction explains step by step how to build a platform image including C
 $ mkdir yocto
 $ cd yocto/
 $ git clone http://git.yoctoproject.org/git/poky
+$ cd poky
+$ git checkout pyro  (latest stable branch)
+$ cd ..
 $ git clone https://github.com/joone/meta-crosswalk
 $ git clone https://github.com/imyller/meta-nodejs.git
 ```
