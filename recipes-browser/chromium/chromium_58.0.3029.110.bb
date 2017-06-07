@@ -11,6 +11,7 @@ SRC_URI += " \
         file://v8-qemu-wrapper.patch \
         file://yocto-bug10635.patch \
         file://chromium_dma.patch \
+        file://libdrm_i915.patch \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
