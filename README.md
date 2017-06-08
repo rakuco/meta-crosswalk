@@ -85,8 +85,6 @@ index 0348bb2..7d81e1e 100644
  EGL_PLATFORMS .="${@bb.utils.contains('PACKAGECONFIG', 'wayland', ',wayland', '', d)}"
  PACKAGECONFIG[egl] = "--enable-egl --with-egl-platforms=${EGL_PLATFORMS}, --disable-egl"
 ```
-
-```
 Build Chromium and create an image using bitbak command.
 ```
 $ bitbake core-image-base
