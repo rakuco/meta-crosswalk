@@ -11,6 +11,8 @@ $ git checkout pyro  (latest stable branch)
 $ cd ..
 $ git clone https://github.com/joone/meta-crosswalk
 $ git clone https://github.com/imyller/meta-nodejs.git
+$ git clone git://git.yoctoproject.org/meta-intel.git
+$ git clone git://git.openembedded.org/meta-openembedded
 ```
 ### Checkout chromium58 branch.
 ```
