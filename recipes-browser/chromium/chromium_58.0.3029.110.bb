@@ -290,6 +290,8 @@ do_install() {
 	install -m 0755 ozone_demo ${D}${libdir}/chromium
 	install -m 0755 mash ${D}${libdir}/chromium
 	install -m 0755 *.service ${D}${libdir}/chromium
+	install -m 0644 *.json ${D}${libdir}/chromium
+	install -m 0644 *.pak ${D}${libdir}/chromium
     install -m 0644 *.so ${D}${libdir}/chromium/
 	install -m 0644 *.bin ${D}${libdir}/chromium/
 	install -m 0644 chrome_*.pak ${D}${libdir}/chromium/
