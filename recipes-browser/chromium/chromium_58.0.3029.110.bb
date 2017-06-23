@@ -12,6 +12,11 @@ SRC_URI += " \
         file://yocto-bug10635.patch \
         file://chromium_dma.patch \
         file://libdrm_i915.patch \
+        file://0001-Add-CrOS-source-files.patch \
+        file://0002-ozone_demo.patch \
+        file://0003-Make-mus_demo-work.patch \
+        file://0004-Fix-the-display-size-problem.patch \
+        file://0005-Make-it-Work-like-CrOS.patch \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 

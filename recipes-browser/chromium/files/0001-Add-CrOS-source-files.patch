@@ -1,0 +1,3177 @@
+From 5c8210567791dd356a251c45bd978c5b4db3906e Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Fri, 16 Jun 2017 23:44:32 -0700
+Subject: [PATCH 1/5] Add CrOS source files
+
+---
+ services/ui/demo/BUILD.gn                          |    1 +
+ services/ui/display/BUILD.gn                       |   20 +-
+ services/ui/display/configure_displays_task.cc     |  123 +++
+ services/ui/display/configure_displays_task.h      |   91 ++
+ services/ui/display/display_change_observer.cc     |  302 +++++
+ services/ui/display/display_change_observer.h      |   74 ++
+ services/ui/display/display_configurator.cc        | 1159 ++++++++++++++++++++
+ services/ui/display/display_configurator.h         |  491 +++++++++
+ services/ui/display/display_layout_manager.h       |   50 +
+ services/ui/display/display_snapshot_virtual.cc    |   53 +
+ services/ui/display/display_snapshot_virtual.h     |   38 +
+ services/ui/display/display_util.cc                |   78 ++
+ services/ui/display/display_util.h                 |   40 +
+ .../ui/display/screen_manager_ozone_internal.cc    |   27 +-
+ .../ui/display/screen_manager_ozone_internal.h     |    9 +-
+ .../display/update_display_configuration_task.cc   |  225 ++++
+ .../ui/display/update_display_configuration_task.h |  119 ++
+ 17 files changed, 2870 insertions(+), 30 deletions(-)
+ create mode 100644 services/ui/display/configure_displays_task.cc
+ create mode 100644 services/ui/display/configure_displays_task.h
+ create mode 100644 services/ui/display/display_change_observer.cc
+ create mode 100644 services/ui/display/display_change_observer.h
+ create mode 100644 services/ui/display/display_configurator.cc
+ create mode 100644 services/ui/display/display_configurator.h
+ create mode 100644 services/ui/display/display_layout_manager.h
+ create mode 100644 services/ui/display/display_snapshot_virtual.cc
+ create mode 100644 services/ui/display/display_snapshot_virtual.h
+ create mode 100644 services/ui/display/display_util.cc
+ create mode 100644 services/ui/display/display_util.h
+ create mode 100644 services/ui/display/update_display_configuration_task.cc
+ create mode 100644 services/ui/display/update_display_configuration_task.h
+
+diff --git a/services/ui/demo/BUILD.gn b/services/ui/demo/BUILD.gn
+index 15b5438..7d212e1 100644
+--- a/services/ui/demo/BUILD.gn
++++ b/services/ui/demo/BUILD.gn
+@@ -45,6 +45,7 @@ source_set("lib") {
+     "//ui/aura_extra",
+     "//ui/gfx/geometry",
+     "//ui/wm",
++    "//ui/views/mus"
+   ]
+ }
+ 
+diff --git a/services/ui/display/BUILD.gn b/services/ui/display/BUILD.gn
+index 24c73bd..43b8f3d 100644
+--- a/services/ui/display/BUILD.gn
++++ b/services/ui/display/BUILD.gn
+@@ -22,27 +22,31 @@ source_set("display") {
+   ]
+ 
+   if (use_ozone) {
+-    if (is_chromeos) {
+       sources += [
+         "output_protection.cc",
+         "output_protection.h",
+         "screen_manager_ozone_internal.cc",
+         "screen_manager_ozone_internal.h",
++        "display_configurator.cc",
++        "display_configurator.h",
++        "display_change_observer.cc",
++        "display_change_observer.h",
++        "display_snapshot_virtual.cc",
++        "display_snapshot_virtual.h",
++        "update_display_configuration_task.cc",
++        "update_display_configuration_task.h",
++        "display_util.cc",
++        "display_util.h",
++        "configure_displays_task.h",
++        "configure_displays_task.cc",
+       ]
+ 
+       deps += [
+-        "//chromeos",
+         "//services/ui/public/interfaces/display",
+         "//skia",
+         "//ui/display/manager",
+         "//ui/ozone",
+       ]
+-    } else {
+-      sources += [
+-        "screen_manager_ozone_external.cc",
+-        "screen_manager_ozone_external.h",
+-      ]
+-    }
+   } else {
+     sources += [
+       "screen_manager_stub_internal.cc",
+diff --git a/services/ui/display/configure_displays_task.cc b/services/ui/display/configure_displays_task.cc
+new file mode 100644
+index 0000000..8d25976
+--- /dev/null
++++ b/services/ui/display/configure_displays_task.cc
+@@ -0,0 +1,123 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "services/ui/display/configure_displays_task.h"
++
++#include "base/auto_reset.h"
++#include "base/bind.h"
++#include "services/ui/display/display_util.h"
++#include "ui/display/types/display_snapshot.h"
++#include "ui/display/types/native_display_delegate.h"
++
++namespace display {
++
++namespace {
++
++// Find the next best mode after |display_mode|. If none can be found return
++// nullptr.
++const DisplayMode* FindNextMode(const DisplaySnapshot& display_state,
++                                const DisplayMode* display_mode) {
++  if (!display_mode)
++    return nullptr;
++
++  int best_mode_pixels = 0;
++  const DisplayMode* best_mode = nullptr;
++  int current_mode_pixels = display_mode->size().GetArea();
++  for (const std::unique_ptr<const DisplayMode>& mode : display_state.modes()) {
++    int pixel_count = mode->size().GetArea();
++    if (pixel_count < current_mode_pixels && pixel_count > best_mode_pixels) {
++      best_mode = mode.get();
++      best_mode_pixels = pixel_count;
++    }
++  }
++
++  return best_mode;
++}
++
++}  // namespace
++
++DisplayConfigureRequest::DisplayConfigureRequest(DisplaySnapshot* display,
++                                                 const DisplayMode* mode,
++                                                 const gfx::Point& origin)
++    : display(display), mode(mode), origin(origin) {}
++
++ConfigureDisplaysTask::ConfigureDisplaysTask(
++    NativeDisplayDelegate* delegate,
++    const std::vector<DisplayConfigureRequest>& requests,
++    const ResponseCallback& callback)
++    : delegate_(delegate),
++      requests_(requests),
++      callback_(callback),
++      is_configuring_(false),
++      num_displays_configured_(0),
++      task_status_(SUCCESS),
++      weak_ptr_factory_(this) {
++  for (size_t i = 0; i < requests_.size(); ++i)
++    pending_request_indexes_.push(i);
++ 
++}
++
++ConfigureDisplaysTask::~ConfigureDisplaysTask() {}
++
++void ConfigureDisplaysTask::Run() {
++  // Synchronous configurators will recursively call Run(). In that case just
++  // defer their call to the next iteration in the while-loop. This is done to
++  // guard against stack overflows if the display has a large list of broken
++  // modes.
++  if (is_configuring_)
++    return;
++
++  {
++    base::AutoReset<bool> recursivity_guard(&is_configuring_, true);
++    while (!pending_request_indexes_.empty()) {
++      size_t index = pending_request_indexes_.front();
++      DisplayConfigureRequest* request = &requests_[index];
++      pending_request_indexes_.pop();
++      // Non-native displays do not require configuration through the
++      // NativeDisplayDelegate.
++      if (!IsPhysicalDisplayType(request->display->type())) {
++        OnConfigured(index, true);
++      } else {
++        delegate_->Configure(*request->display, request->mode, request->origin,
++                             base::Bind(&ConfigureDisplaysTask::OnConfigured,
++                                        weak_ptr_factory_.GetWeakPtr(), index));
++      }
++    }
++  }
++
++  // Nothing should be modified after the |callback_| is called since the
++  // task may be deleted in the callback.
++  if (num_displays_configured_ == requests_.size())
++    callback_.Run(task_status_);
++}
++
++void ConfigureDisplaysTask::OnConfigured(size_t index, bool success) {
++  DisplayConfigureRequest* request = &requests_[index];
++  VLOG(2) << "Configured status=" << success
++          << " display=" << request->display->display_id()
++          << " origin=" << request->origin.ToString()
++          << " mode=" << (request->mode ? request->mode->ToString() : "null");
++  if (!success) {
++    request->mode = FindNextMode(*request->display, request->mode);
++    if (request->mode) {
++      pending_request_indexes_.push(index);
++      if (task_status_ == SUCCESS)
++        task_status_ = PARTIAL_SUCCESS;
++
++      Run();
++      return;
++    }
++  } else {
++    request->display->set_current_mode(request->mode);
++    request->display->set_origin(request->origin);
++  }
++
++  num_displays_configured_++;
++  if (!success)
++    task_status_ = ERROR;
++
++  Run();
++}
++
++}  // namespace display
+diff --git a/services/ui/display/configure_displays_task.h b/services/ui/display/configure_displays_task.h
+new file mode 100644
+index 0000000..d9e3ace
+--- /dev/null
++++ b/services/ui/display/configure_displays_task.h
+@@ -0,0 +1,91 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_CONFIGURE_DISPLAYS_TASK_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_CONFIGURE_DISPLAYS_TASK_H_
++
++#include <stddef.h>
++
++#include <queue>
++#include <vector>
++
++#include "base/callback.h"
++#include "base/macros.h"
++#include "base/memory/weak_ptr.h"
++#include "ui/display/manager/display_manager_export.h"
++#include "ui/gfx/geometry/point.h"
++
++namespace display {
++
++class DisplayMode;
++class DisplaySnapshot;
++class NativeDisplayDelegate;
++
++struct DISPLAY_MANAGER_EXPORT DisplayConfigureRequest {
++  DisplayConfigureRequest(DisplaySnapshot* display,
++                          const DisplayMode* mode,
++                          const gfx::Point& origin);
++
++  DisplaySnapshot* display;
++  const DisplayMode* mode;
++  gfx::Point origin;
++};
++
++// Applies the display configuration asynchronously.
++class DISPLAY_MANAGER_EXPORT ConfigureDisplaysTask {
++ public:
++  enum Status {
++    // At least one of the displays failed to apply any mode it supports.
++    ERROR,
++
++    // The requested configuration was applied.
++    SUCCESS,
++
++    // At least one of the displays failed to apply the requested
++    // configuration, but it managed to fall back to another mode.
++    PARTIAL_SUCCESS,
++  };
++
++  typedef base::Callback<void(Status)> ResponseCallback;
++
++  ConfigureDisplaysTask(NativeDisplayDelegate* delegate,
++                        const std::vector<DisplayConfigureRequest>& requests,
++                        const ResponseCallback& callback);
++  ~ConfigureDisplaysTask();
++
++  // Starts the configuration task.
++  void Run();
++
++ private:
++  void OnConfigured(size_t index, bool success);
++
++  NativeDisplayDelegate* delegate_;  // Not owned.
++
++  std::vector<DisplayConfigureRequest> requests_;
++
++  // When the task finishes executing it runs the callback to notify that the
++  // task is done and the task status.
++  ResponseCallback callback_;
++
++  // Stores the indexes of pending requests in |requests_|.
++  std::queue<size_t> pending_request_indexes_;
++
++  // Used to keep make sure that synchronous executions do not recurse during
++  // the configuration.
++  bool is_configuring_;
++
++  // Number of display configured. This is used to check whether there are
++  // pending requests.
++  size_t num_displays_configured_;
++
++  Status task_status_;
++
++  base::WeakPtrFactory<ConfigureDisplaysTask> weak_ptr_factory_;
++
++  DISALLOW_COPY_AND_ASSIGN(ConfigureDisplaysTask);
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_CONFIGURE_DISPLAYS_TASK_H_
+diff --git a/services/ui/display/display_change_observer.cc b/services/ui/display/display_change_observer.cc
+new file mode 100644
+index 0000000..6648bc2
+--- /dev/null
++++ b/services/ui/display/display_change_observer.cc
+@@ -0,0 +1,302 @@
++// Copyright 2013 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "services/ui/display/display_change_observer.h"
++
++#include <algorithm>
++#include <map>
++#include <set>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/logging.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/user_activity/user_activity_detector.h"
++#include "ui/display/display.h"
++#include "ui/display/display_layout.h"
++#include "ui/display/manager/chromeos/touchscreen_util.h"
++#include "ui/display/manager/display_layout_store.h"
++#include "ui/display/manager/display_manager.h"
++#include "ui/display/manager/display_manager_utilities.h"
++#include "ui/display/types/display_mode.h"
++#include "ui/display/types/display_snapshot.h"
++#include "ui/display/util/display_util.h"
++#include "ui/events/devices/input_device_manager.h"
++#include "ui/events/devices/touchscreen_device.h"
++#include "ui/strings/grit/ui_strings.h"
++
++namespace display {
++namespace {
++
++// The DPI threshold to determine the device scale factor.
++// DPI higher than |dpi| will use |device_scale_factor|.
++struct DeviceScaleFactorDPIThreshold {
++  float dpi;
++  float device_scale_factor;
++};
++
++const DeviceScaleFactorDPIThreshold kThresholdTable[] = {
++    {200.0f, 2.0f},
++    {150.0f, 1.25f},
++    {0.0f, 1.0f},
++};
++
++// 1 inch in mm.
++const float kInchInMm = 25.4f;
++
++// The minimum pixel width whose monitor can be called as '4K'.
++const int kMinimumWidthFor4K = 3840;
++
++// The list of device scale factors (in addition to 1.0f) which is
++// available in external large monitors.
++const float kAdditionalDeviceScaleFactorsFor4k[] = {1.25f, 2.0f};
++
++void UpdateInternalDisplayId(
++    const DisplayConfigurator::DisplayStateList& display_states) {
++  for (auto* state : display_states) {
++    if (state->type() == DISPLAY_CONNECTION_TYPE_INTERNAL) {
++      if (Display::HasInternalDisplay())
++        DCHECK_EQ(Display::InternalDisplayId(), state->display_id());
++      Display::SetInternalDisplayId(state->display_id());
++    }
++  }
++}
++
++}  // namespace
++
++// static
++ManagedDisplayInfo::ManagedDisplayModeList
++DisplayChangeObserver::GetInternalManagedDisplayModeList(
++    const ManagedDisplayInfo& display_info,
++    const DisplaySnapshot& output) {
++  const DisplayMode* ui_native_mode = output.native_mode();
++  scoped_refptr<ManagedDisplayMode> native_mode = new ManagedDisplayMode(
++      ui_native_mode->size(), ui_native_mode->refresh_rate(),
++      ui_native_mode->is_interlaced(), true, 1.0,
++      display_info.device_scale_factor());
++
++  return CreateInternalManagedDisplayModeList(native_mode);
++}
++
++// static
++ManagedDisplayInfo::ManagedDisplayModeList
++DisplayChangeObserver::GetExternalManagedDisplayModeList(
++    const DisplaySnapshot& output) {
++  using DisplayModeMap =
++      std::map<std::pair<int, int>, scoped_refptr<ManagedDisplayMode>>;
++  DisplayModeMap display_mode_map;
++
++  scoped_refptr<ManagedDisplayMode> native_mode = new ManagedDisplayMode();
++  for (const auto& mode_info : output.modes()) {
++    const std::pair<int, int> size(mode_info->size().width(),
++                                   mode_info->size().height());
++    scoped_refptr<ManagedDisplayMode> display_mode = new ManagedDisplayMode(
++        mode_info->size(), mode_info->refresh_rate(),
++        mode_info->is_interlaced(), output.native_mode() == mode_info.get(),
++        1.0, 1.0);
++    if (display_mode->native())
++      native_mode = display_mode;
++
++    // Add the display mode if it isn't already present and override interlaced
++    // display modes with non-interlaced ones.
++    auto display_mode_it = display_mode_map.find(size);
++    if (display_mode_it == display_mode_map.end())
++      display_mode_map.insert(std::make_pair(size, display_mode));
++    else if (display_mode_it->second->is_interlaced() &&
++             !display_mode->is_interlaced())
++      display_mode_it->second = std::move(display_mode);
++  }
++
++  ManagedDisplayInfo::ManagedDisplayModeList display_mode_list;
++  for (const auto& display_mode_pair : display_mode_map)
++    display_mode_list.push_back(std::move(display_mode_pair.second));
++
++  if (output.native_mode()) {
++    const std::pair<int, int> size(native_mode->size().width(),
++                                   native_mode->size().height());
++    auto it = display_mode_map.find(size);
++    DCHECK(it != display_mode_map.end())
++        << "Native mode must be part of the mode list.";
++
++    // If the native mode was replaced re-add it.
++    if (!it->second->native())
++      display_mode_list.push_back(native_mode);
++  }
++
++  if (native_mode->size().width() >= kMinimumWidthFor4K) {
++    for (size_t i = 0; i < arraysize(kAdditionalDeviceScaleFactorsFor4k); ++i) {
++      scoped_refptr<ManagedDisplayMode> mode = new ManagedDisplayMode(
++          native_mode->size(), native_mode->refresh_rate(),
++          native_mode->is_interlaced(), false /* native */,
++          native_mode->ui_scale(), kAdditionalDeviceScaleFactorsFor4k[i]);
++      display_mode_list.push_back(mode);
++    }
++  }
++
++  return display_mode_list;
++}
++
++DisplayChangeObserver::DisplayChangeObserver(
++    DisplayConfigurator* display_configurator,
++    DisplayManager* display_manager)
++    : display_configurator_(display_configurator),
++      display_manager_(display_manager) {
++  ui::InputDeviceManager::GetInstance()->AddObserver(this);
++}
++
++DisplayChangeObserver::~DisplayChangeObserver() {
++  ui::InputDeviceManager::GetInstance()->RemoveObserver(this);
++}
++
++MultipleDisplayState DisplayChangeObserver::GetStateForDisplayIds(
++    const DisplayConfigurator::DisplayStateList& display_states) const {
++  UpdateInternalDisplayId(display_states);
++  if (display_states.size() == 1)
++    return MULTIPLE_DISPLAY_STATE_SINGLE;
++  DisplayIdList list =
++      GenerateDisplayIdList(display_states.begin(), display_states.end(),
++                            [](const DisplaySnapshot* display_state) {
++                              return display_state->display_id();
++                            });
++
++  const DisplayLayout& layout =
++      display_manager_->layout_store()->GetRegisteredDisplayLayout(list);
++  return layout.mirrored ? MULTIPLE_DISPLAY_STATE_DUAL_MIRROR
++                         : MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED;
++}
++
++bool DisplayChangeObserver::GetResolutionForDisplayId(int64_t display_id,
++                                                      gfx::Size* size) const {
++  scoped_refptr<ManagedDisplayMode> mode =
++      display_manager_->GetSelectedModeForDisplayId(display_id);
++  if (!mode)
++    return false;
++  *size = mode->size();
++  return true;
++}
++
++void DisplayChangeObserver::OnDisplayModeChanged(
++    const DisplayConfigurator::DisplayStateList& display_states) {
++  UpdateInternalDisplayId(display_states);
++
++  std::vector<ManagedDisplayInfo> displays;
++  std::set<int64_t> ids;
++  for (const DisplaySnapshot* state : display_states) {
++    const DisplayMode* mode_info = state->current_mode();
++    if (!mode_info)
++      continue;
++
++    float device_scale_factor = 1.0f;
++    // Sets dpi only if the screen size is not blacklisted.
++    float dpi = IsDisplaySizeBlackListed(state->physical_size())
++                    ? 0
++                    : kInchInMm * mode_info->size().width() /
++                          state->physical_size().width();
++    if (state->type() == DISPLAY_CONNECTION_TYPE_INTERNAL) {
++      if (dpi)
++        device_scale_factor = FindDeviceScaleFactor(dpi);
++    } else {
++      scoped_refptr<ManagedDisplayMode> mode =
++          display_manager_->GetSelectedModeForDisplayId(state->display_id());
++      if (mode) {
++        device_scale_factor = mode->device_scale_factor();
++      } else {
++        // For monitors that are 40 inches and 4K or above, set
++        // |device_scale_factor| to 2x. For margin purposes, 100 is subtracted
++        // from the value of |k2xThreshouldSizeSquaredFor4KInMm|
++        const int k2xThreshouldSizeSquaredFor4KInMm =
++            (40 * 40 * kInchInMm * kInchInMm) - 100;
++        gfx::Vector2d size_in_vec(state->physical_size().width(),
++                                  state->physical_size().height());
++        if (size_in_vec.LengthSquared() > k2xThreshouldSizeSquaredFor4KInMm &&
++            mode_info->size().width() >= kMinimumWidthFor4K) {
++          // Make sure that additional device scale factors table has 2x.
++          DCHECK_EQ(2.0f, kAdditionalDeviceScaleFactorsFor4k[1]);
++          device_scale_factor = 2.0f;
++        }
++      }
++    }
++    gfx::Rect display_bounds(state->origin(), mode_info->size());
++
++    std::string name;
++    switch (state->type()) {
++      case DISPLAY_CONNECTION_TYPE_INTERNAL:
++        name = l10n_util::GetStringUTF8(IDS_DISPLAY_NAME_INTERNAL);
++        break;
++      case DISPLAY_CONNECTION_TYPE_VIRTUAL:
++        name = l10n_util::GetStringUTF8(IDS_DISPLAY_NAME_VIRTUAL);
++        break;
++      default:
++        name = state->display_name();
++    }
++
++    if (name.empty())
++      name = l10n_util::GetStringUTF8(IDS_DISPLAY_NAME_UNKNOWN);
++
++    bool has_overscan = state->has_overscan();
++    int64_t id = state->display_id();
++    ids.insert(id);
++
++    displays.push_back(ManagedDisplayInfo(id, name, has_overscan));
++    ManagedDisplayInfo& new_info = displays.back();
++    new_info.set_sys_path(state->sys_path());
++    new_info.set_device_scale_factor(device_scale_factor);
++    new_info.SetBounds(display_bounds);
++    new_info.set_native(true);
++    new_info.set_is_aspect_preserving_scaling(
++        state->is_aspect_preserving_scaling());
++    if (dpi)
++      new_info.set_device_dpi(dpi);
++
++    ManagedDisplayInfo::ManagedDisplayModeList display_modes =
++        (state->type() == DISPLAY_CONNECTION_TYPE_INTERNAL)
++            ? GetInternalManagedDisplayModeList(new_info, *state)
++            : GetExternalManagedDisplayModeList(*state);
++    new_info.SetManagedDisplayModes(display_modes);
++
++    new_info.set_available_color_profiles(
++        display_configurator_->GetAvailableColorCalibrationProfiles(id));
++    new_info.set_maximum_cursor_size(state->maximum_cursor_size());
++  }
++
++  // For the purposes of user activity detection, ignore synthetic mouse events
++  // that are triggered by screen resizes: http://crbug.com/360634
++  ui::UserActivityDetector* user_activity_detector =
++      ui::UserActivityDetector::Get();
++  if (user_activity_detector)
++    user_activity_detector->OnDisplayPowerChanging();
++}
++
++void DisplayChangeObserver::OnDisplayModeChangeFailed(
++    const DisplayConfigurator::DisplayStateList& displays,
++    MultipleDisplayState failed_new_state) {
++  // If display configuration failed during startup, simply update the display
++  // manager with detected displays. If no display is detected, it will
++  // create a pseudo display.
++  if (display_manager_->GetNumDisplays() == 0)
++    OnDisplayModeChanged(displays);
++}
++
++void DisplayChangeObserver::OnTouchscreenDeviceConfigurationChanged() {
++  // If there are no cached display snapshots, either there are no attached
++  // displays or the cached snapshots have been invalidated. For the first case
++  // there aren't any touchscreens to associate. For the second case, the
++  // displays and touch input-devices will get associated when display
++  // configuration finishes.
++  const auto& cached_displays = display_configurator_->cached_displays();
++  if (!cached_displays.empty())
++    OnDisplayModeChanged(cached_displays);
++}
++
++// static
++float DisplayChangeObserver::FindDeviceScaleFactor(float dpi) {
++  for (size_t i = 0; i < arraysize(kThresholdTable); ++i) {
++    if (dpi > kThresholdTable[i].dpi)
++      return kThresholdTable[i].device_scale_factor;
++  }
++  return 1.0f;
++}
++
++}  // namespace display
+diff --git a/services/ui/display/display_change_observer.h b/services/ui/display/display_change_observer.h
+new file mode 100644
+index 0000000..d9468f9
+--- /dev/null
++++ b/services/ui/display/display_change_observer.h
+@@ -0,0 +1,74 @@
++// Copyright 2013 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CHANGE_OBSERVER_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CHANGE_OBSERVER_H_
++
++#include <stdint.h>
++
++#include <memory>
++#include <vector>
++
++#include "base/macros.h"
++#include "ui/display/manager/chromeos/display_configurator.h"
++#include "ui/display/manager/display_manager_export.h"
++#include "ui/display/manager/managed_display_info.h"
++#include "ui/events/devices/input_device_event_observer.h"
++
++namespace display {
++
++class DisplayManager;
++class DisplaySnapshot;
++
++// An object that observes changes in display configuration and updates
++// DisplayManager.
++class DISPLAY_MANAGER_EXPORT DisplayChangeObserver
++    : public DisplayConfigurator::StateController,
++      public DisplayConfigurator::Observer,
++      public ui::InputDeviceEventObserver {
++ public:
++  // Returns the mode list for internal display.
++  DISPLAY_EXPORT static ManagedDisplayInfo::ManagedDisplayModeList
++  GetInternalManagedDisplayModeList(const ManagedDisplayInfo& display_info,
++                                    const DisplaySnapshot& output);
++
++  // Returns the resolution list.
++  DISPLAY_EXPORT static ManagedDisplayInfo::ManagedDisplayModeList
++  GetExternalManagedDisplayModeList(const DisplaySnapshot& output);
++
++  DisplayChangeObserver(DisplayConfigurator* display_configurator,
++                        DisplayManager* display_manager);
++  ~DisplayChangeObserver() override;
++
++  // DisplayConfigurator::StateController overrides:
++  MultipleDisplayState GetStateForDisplayIds(
++      const DisplayConfigurator::DisplayStateList& outputs) const override;
++  bool GetResolutionForDisplayId(int64_t display_id,
++                                 gfx::Size* size) const override;
++
++  // Overriden from DisplayConfigurator::Observer:
++  void OnDisplayModeChanged(
++      const DisplayConfigurator::DisplayStateList& outputs) override;
++  void OnDisplayModeChangeFailed(
++      const DisplayConfigurator::DisplayStateList& displays,
++      MultipleDisplayState failed_new_state) override;
++
++  // Overriden from ui::InputDeviceEventObserver:
++  void OnTouchscreenDeviceConfigurationChanged() override;
++
++  // Exposed for testing.
++  DISPLAY_EXPORT static float FindDeviceScaleFactor(float dpi);
++
++ private:
++  // Both |display_configurator_| and |display_manager_| are not owned and must
++  // outlive DisplayChangeObserver.
++  DisplayConfigurator* display_configurator_;
++  DisplayManager* display_manager_;
++
++  DISALLOW_COPY_AND_ASSIGN(DisplayChangeObserver);
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CHANGE_OBSERVER_H_
+diff --git a/services/ui/display/display_configurator.cc b/services/ui/display/display_configurator.cc
+new file mode 100644
+index 0000000..2a15124
+--- /dev/null
++++ b/services/ui/display/display_configurator.cc
+@@ -0,0 +1,1159 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "services/ui/display/display_configurator.h"
++
++#include <stddef.h>
++#include <utility>
++
++#include "base/bind.h"
++#include "base/command_line.h"
++#include "base/logging.h"
++#include "base/macros.h"
++#include "base/memory/ptr_util.h"
++#include "base/time/time.h"
++#include "chromeos/system/devicemode.h"
++#include "ui/display/display.h"
++#include "ui/display/display_switches.h"
++#include "services/ui/display/display_layout_manager.h"
++#include "services/ui/display/display_util.h"
++#include "services/ui/display/display_snapshot_virtual.h"
++#include "services/ui/display/update_display_configuration_task.h"
++#include "ui/display/types/display_mode.h"
++#include "ui/display/types/display_snapshot.h"
++#include "ui/display/types/native_display_delegate.h"
++#include "ui/display/util/display_util.h"
++
++namespace display {
++
++namespace {
++
++typedef std::vector<const DisplayMode*> DisplayModeList;
++
++// The EDID specification marks the top bit of the manufacturer id as reserved.
++const int16_t kReservedManufacturerID = static_cast<int16_t>(1 << 15);
++
++struct DisplayState {
++  DisplaySnapshot* display = nullptr;  // Not owned.
++
++  // User-selected mode for the display.
++  const DisplayMode* selected_mode = nullptr;
++
++  // Mode used when displaying the same desktop on multiple displays.
++  const DisplayMode* mirror_mode = nullptr;
++};
++
++void DoNothing(bool status) {}
++
++}  // namespace
++
++const int DisplayConfigurator::kSetDisplayPowerNoFlags = 0;
++const int DisplayConfigurator::kSetDisplayPowerForceProbe = 1 << 0;
++const int DisplayConfigurator::kSetDisplayPowerOnlyIfSingleInternalDisplay =
++    1 << 1;
++
++bool DisplayConfigurator::TestApi::TriggerConfigureTimeout() {
++  if (configurator_->configure_timer_.IsRunning()) {
++    configurator_->configure_timer_.user_task().Run();
++    configurator_->configure_timer_.Stop();
++    return true;
++  } else {
++    return false;
++  }
++}
++
++base::TimeDelta DisplayConfigurator::TestApi::GetConfigureDelay() const {
++  return configurator_->configure_timer_.IsRunning()
++             ? configurator_->configure_timer_.GetCurrentDelay()
++             : base::TimeDelta();
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// DisplayConfigurator::DisplayLayoutManagerImpl implementation
++
++class DisplayConfigurator::DisplayLayoutManagerImpl
++    : public DisplayLayoutManager {
++ public:
++  DisplayLayoutManagerImpl(DisplayConfigurator* configurator);
++  ~DisplayLayoutManagerImpl() override;
++
++  // DisplayConfigurator::DisplayLayoutManager:
++  SoftwareMirroringController* GetSoftwareMirroringController() const override;
++  StateController* GetStateController() const override;
++  MultipleDisplayState GetDisplayState() const override;
++  chromeos::DisplayPowerState GetPowerState() const override;
++  bool GetDisplayLayout(const std::vector<DisplaySnapshot*>& displays,
++                        MultipleDisplayState new_display_state,
++                        chromeos::DisplayPowerState new_power_state,
++                        std::vector<DisplayConfigureRequest>* requests,
++                        gfx::Size* framebuffer_size) const override;
++  DisplayStateList GetDisplayStates() const override;
++  bool IsMirroring() const override;
++
++ private:
++  // Parses the |displays| into a list of DisplayStates. This effectively adds
++  // |mirror_mode| and |selected_mode| to the returned results.
++  // TODO(dnicoara): Break this into GetSelectedMode() and GetMirrorMode() and
++  // remove DisplayState.
++  std::vector<DisplayState> ParseDisplays(
++      const std::vector<DisplaySnapshot*>& displays) const;
++
++  const DisplayMode* GetUserSelectedMode(const DisplaySnapshot& display) const;
++
++  // Helper method for ParseDisplays() that initializes the passed-in
++  // displays' |mirror_mode| fields by looking for a mode in |internal_display|
++  // and |external_display| having the same resolution. Returns false if a
++  // shared mode wasn't found or created.
++  //
++  // |try_panel_fitting| allows creating a panel-fitting mode for
++  // |internal_display| instead of only searching for a matching mode (note that
++  // it may lead to a crash if |internal_display| is not capable of panel
++  // fitting).
++  //
++  // |preserve_aspect| limits the search/creation only to the modes having the
++  // native aspect ratio of |external_display|.
++  bool FindMirrorMode(DisplayState* internal_display,
++                      DisplayState* external_display,
++                      bool try_panel_fitting,
++                      bool preserve_aspect) const;
++
++  DisplayConfigurator* configurator_;  // Not owned.
++
++  DISALLOW_COPY_AND_ASSIGN(DisplayLayoutManagerImpl);
++};
++
++DisplayConfigurator::DisplayLayoutManagerImpl::DisplayLayoutManagerImpl(
++    DisplayConfigurator* configurator)
++    : configurator_(configurator) {}
++
++DisplayConfigurator::DisplayLayoutManagerImpl::~DisplayLayoutManagerImpl() {}
++
++DisplayConfigurator::SoftwareMirroringController*
++DisplayConfigurator::DisplayLayoutManagerImpl::GetSoftwareMirroringController()
++    const {
++  return configurator_->mirroring_controller_;
++}
++
++DisplayConfigurator::StateController*
++DisplayConfigurator::DisplayLayoutManagerImpl::GetStateController() const {
++  return configurator_->state_controller_;
++}
++
++MultipleDisplayState
++DisplayConfigurator::DisplayLayoutManagerImpl::GetDisplayState() const {
++  return configurator_->current_display_state_;
++}
++
++chromeos::DisplayPowerState
++DisplayConfigurator::DisplayLayoutManagerImpl::GetPowerState() const {
++  return configurator_->current_power_state_;
++}
++
++std::vector<DisplayState>
++DisplayConfigurator::DisplayLayoutManagerImpl::ParseDisplays(
++    const std::vector<DisplaySnapshot*>& snapshots) const {
++  std::vector<DisplayState> cached_displays;
++  for (auto* snapshot : snapshots) {
++    DisplayState display_state;
++    display_state.display = snapshot;
++    display_state.selected_mode = GetUserSelectedMode(*snapshot);
++    cached_displays.push_back(display_state);
++  }
++
++  // Set |mirror_mode| fields.
++  if (cached_displays.size() == 2) {
++    bool one_is_internal =
++        cached_displays[0].display->type() == DISPLAY_CONNECTION_TYPE_INTERNAL;
++    bool two_is_internal =
++        cached_displays[1].display->type() == DISPLAY_CONNECTION_TYPE_INTERNAL;
++    int internal_displays =
++        (one_is_internal ? 1 : 0) + (two_is_internal ? 1 : 0);
++    DCHECK_LT(internal_displays, 2);
++    LOG_IF(WARNING, internal_displays >= 2)
++        << "At least two internal displays detected.";
++
++    bool can_mirror = false;
++    for (int attempt = 0; !can_mirror && attempt < 2; ++attempt) {
++      // Try preserving external display's aspect ratio on the first attempt.
++      // If that fails, fall back to the highest matching resolution.
++      bool preserve_aspect = attempt == 0;
++
++      if (internal_displays == 1) {
++        can_mirror = FindMirrorMode(&cached_displays[one_is_internal ? 0 : 1],
++                                    &cached_displays[one_is_internal ? 1 : 0],
++                                    configurator_->is_panel_fitting_enabled_,
++                                    preserve_aspect);
++      } else {  // if (internal_displays == 0)
++        // No panel fitting for external displays, so fall back to exact match.
++        can_mirror = FindMirrorMode(&cached_displays[0], &cached_displays[1],
++                                    false, preserve_aspect);
++        if (!can_mirror && preserve_aspect) {
++          // FindMirrorMode() will try to preserve aspect ratio of what it
++          // thinks is external display, so if it didn't succeed with one, maybe
++          // it will succeed with the other.  This way we will have the correct
++          // aspect ratio on at least one of them.
++          can_mirror = FindMirrorMode(&cached_displays[1], &cached_displays[0],
++                                      false, preserve_aspect);
++        }
++      }
++    }
++  }
++
++  return cached_displays;
++}
++
++bool DisplayConfigurator::DisplayLayoutManagerImpl::GetDisplayLayout(
++    const std::vector<DisplaySnapshot*>& displays,
++    MultipleDisplayState new_display_state,
++    chromeos::DisplayPowerState new_power_state,
++    std::vector<DisplayConfigureRequest>* requests,
++    gfx::Size* framebuffer_size) const {
++  std::vector<DisplayState> states = ParseDisplays(displays);
++  std::vector<bool> display_power;
++  int num_on_displays =
++      GetDisplayPower(displays, new_power_state, &display_power);
++  VLOG(1) << "EnterState: display="
++          << MultipleDisplayStateToString(new_display_state)
++          << " power=" << DisplayPowerStateToString(new_power_state);
++
++  // Framebuffer dimensions.
++  gfx::Size size;
++
++  for (size_t i = 0; i < displays.size(); ++i) {
++    requests->push_back(DisplayConfigureRequest(
++        displays[i], displays[i]->current_mode(), gfx::Point()));
++  }
++
++  switch (new_display_state) {
++    case MULTIPLE_DISPLAY_STATE_INVALID:
++      NOTREACHED() << "Ignoring request to enter invalid state with "
++                   << displays.size() << " connected display(s)";
++      return false;
++    case MULTIPLE_DISPLAY_STATE_HEADLESS:
++      if (displays.size() != 0) {
++        LOG(WARNING) << "Ignoring request to enter headless mode with "
++                     << displays.size() << " connected display(s)";
++        return false;
++      }
++      break;
++    case MULTIPLE_DISPLAY_STATE_SINGLE: {
++      // If there are multiple displays connected, only one should be turned on.
++      if (displays.size() != 1 && num_on_displays != 1) {
++        LOG(WARNING) << "Ignoring request to enter single mode with "
++                     << displays.size() << " connected displays and "
++                     << num_on_displays << " turned on";
++        return false;
++      }
++
++      for (size_t i = 0; i < states.size(); ++i) {
++        const DisplayState* state = &states[i];
++        (*requests)[i].mode = display_power[i] ? state->selected_mode : NULL;
++
++        if (display_power[i] || states.size() == 1) {
++          const DisplayMode* mode_info = state->selected_mode;
++          if (!mode_info) {
++            LOG(WARNING) << "No selected mode when configuring display: "
++                         << state->display->ToString();
++            return false;
++          }
++          if (mode_info->size() == gfx::Size(1024, 768)) {
++            VLOG(1) << "Potentially misdetecting display(1024x768):"
++                    << " displays size=" << states.size()
++                    << ", num_on_displays=" << num_on_displays
++                    << ", current size:" << size.width() << "x" << size.height()
++                    << ", i=" << i << ", display=" << state->display->ToString()
++                    << ", display_mode=" << mode_info->ToString();
++          }
++          size = mode_info->size();
++        }
++      }
++      break;
++    }
++    case MULTIPLE_DISPLAY_STATE_DUAL_MIRROR: {
++      if (states.size() != 2 ||
++          (num_on_displays != 0 && num_on_displays != 2)) {
++        LOG(WARNING) << "Ignoring request to enter mirrored mode with "
++                     << states.size() << " connected display(s) and "
++                     << num_on_displays << " turned on";
++        return false;
++      }
++
++      const DisplayMode* mode_info = states[0].mirror_mode;
++      if (!mode_info) {
++        LOG(WARNING) << "No mirror mode when configuring display: "
++                     << states[0].display->ToString();
++        return false;
++      }
++      size = mode_info->size();
++
++      for (size_t i = 0; i < states.size(); ++i) {
++        const DisplayState* state = &states[i];
++        (*requests)[i].mode = display_power[i] ? state->mirror_mode : NULL;
++      }
++      break;
++    }
++    case MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED:
++    case MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED: {
++      // In docked mode (with internal display + 2 external displays) the state
++      // will be DUAL_EXTENDED with internal display turned off and the 2
++      // external displays turned on.
++      if (new_display_state == MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED &&
++          states.size() != 2 && num_on_displays != 2) {
++        LOG(WARNING) << "Ignoring request to enter extended mode with "
++                     << states.size() << " connected display(s) and "
++                     << num_on_displays << " turned on";
++        return false;
++      }
++
++      for (size_t i = 0; i < states.size(); ++i) {
++        const DisplayState* state = &states[i];
++        (*requests)[i].origin.set_y(size.height() ? size.height() + kVerticalGap
++                                                  : 0);
++        (*requests)[i].mode = display_power[i] ? state->selected_mode : NULL;
++
++        // Retain the full screen size even if all displays are off so the
++        // same desktop configuration can be restored when the displays are
++        // turned back on.
++        const DisplayMode* mode_info = states[i].selected_mode;
++        if (!mode_info) {
++          LOG(WARNING) << "No selected mode when configuring display: "
++                       << state->display->ToString();
++          return false;
++        }
++
++        size.set_width(std::max<int>(size.width(), mode_info->size().width()));
++        size.set_height(size.height() + (size.height() ? kVerticalGap : 0) +
++                        mode_info->size().height());
++      }
++      break;
++    }
++  }
++  DCHECK(new_display_state == MULTIPLE_DISPLAY_STATE_HEADLESS ||
++         !size.IsEmpty());
++  *framebuffer_size = size;
++  return true;
++}
++
++DisplayConfigurator::DisplayStateList
++DisplayConfigurator::DisplayLayoutManagerImpl::GetDisplayStates() const {
++  return configurator_->cached_displays();
++}
++
++bool DisplayConfigurator::DisplayLayoutManagerImpl::IsMirroring() const {
++  if (GetDisplayState() == MULTIPLE_DISPLAY_STATE_DUAL_MIRROR)
++    return true;
++
++  return GetSoftwareMirroringController() &&
++         GetSoftwareMirroringController()->SoftwareMirroringEnabled();
++}
++
++const DisplayMode*
++DisplayConfigurator::DisplayLayoutManagerImpl::GetUserSelectedMode(
++    const DisplaySnapshot& display) const {
++  gfx::Size size;
++  const DisplayMode* selected_mode = nullptr;
++  if (GetStateController() &&
++      GetStateController()->GetResolutionForDisplayId(display.display_id(),
++                                                      &size)) {
++    selected_mode = FindDisplayModeMatchingSize(display, size);
++  }
++
++  // Fall back to native mode.
++  return selected_mode ? selected_mode : display.native_mode();
++}
++
++bool DisplayConfigurator::DisplayLayoutManagerImpl::FindMirrorMode(
++    DisplayState* internal_display,
++    DisplayState* external_display,
++    bool try_panel_fitting,
++    bool preserve_aspect) const {
++  const DisplayMode* internal_native_info =
++      internal_display->display->native_mode();
++  const DisplayMode* external_native_info =
++      external_display->display->native_mode();
++  if (!internal_native_info || !external_native_info)
++    return false;
++
++  // Check if some external display resolution can be mirrored on internal.
++  // Prefer the modes in the order they're present in DisplaySnapshot, assuming
++  // this is the order in which they look better on the monitor.
++  for (const auto& external_mode : external_display->display->modes()) {
++    bool is_native_aspect_ratio =
++        external_native_info->size().width() * external_mode->size().height() ==
++        external_native_info->size().height() * external_mode->size().width();
++    if (preserve_aspect && !is_native_aspect_ratio)
++      continue;  // Allow only aspect ratio preserving modes for mirroring.
++
++    // Try finding an exact match.
++    for (const auto& internal_mode : internal_display->display->modes()) {
++      if (internal_mode->size() == external_mode->size() &&
++          internal_mode->is_interlaced() == external_mode->is_interlaced()) {
++        internal_display->mirror_mode = internal_mode.get();
++        external_display->mirror_mode = external_mode.get();
++        return true;  // Mirror mode found.
++      }
++    }
++
++    // Try to create a matching internal display mode by panel fitting.
++    if (try_panel_fitting) {
++      // We can downscale by 1.125, and upscale indefinitely. Downscaling looks
++      // ugly, so, can fit == can upscale. Also, internal panels don't support
++      // fitting interlaced modes.
++      bool can_fit = internal_native_info->size().width() >=
++                         external_mode->size().width() &&
++                     internal_native_info->size().height() >=
++                         external_mode->size().height() &&
++                     !external_mode->is_interlaced();
++      if (can_fit) {
++        configurator_->native_display_delegate_->AddMode(
++            *internal_display->display, external_mode.get());
++        internal_display->display->add_mode(external_mode.get());
++        internal_display->mirror_mode =
++            internal_display->display->modes().back().get();
++        external_display->mirror_mode = external_mode.get();
++        return true;  // Mirror mode created.
++      }
++    }
++  }
++
++  return false;
++}
++
++////////////////////////////////////////////////////////////////////////////////
++// DisplayConfigurator implementation
++
++// static
++const DisplayMode* DisplayConfigurator::FindDisplayModeMatchingSize(
++    const DisplaySnapshot& display,
++    const gfx::Size& size) {
++  const DisplayMode* best_mode = NULL;
++  for (const std::unique_ptr<const DisplayMode>& mode : display.modes()) {
++    if (mode->size() != size)
++      continue;
++
++    if (mode.get() == display.native_mode()) {
++      best_mode = mode.get();
++      break;
++    }
++
++    if (!best_mode) {
++      best_mode = mode.get();
++      continue;
++    }
++
++    if (mode->is_interlaced()) {
++      if (!best_mode->is_interlaced())
++        continue;
++    } else {
++      // Reset the best rate if the non interlaced is
++      // found the first time.
++      if (best_mode->is_interlaced()) {
++        best_mode = mode.get();
++        continue;
++      }
++    }
++    if (mode->refresh_rate() < best_mode->refresh_rate())
++      continue;
++
++    best_mode = mode.get();
++  }
++
++  return best_mode;
++}
++
++DisplayConfigurator::DisplayConfigurator()
++    : state_controller_(NULL),
++      mirroring_controller_(NULL),
++      is_panel_fitting_enabled_(false),
++      configure_display_(true),
++      current_display_state_(MULTIPLE_DISPLAY_STATE_INVALID),
++      current_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
++      requested_display_state_(MULTIPLE_DISPLAY_STATE_INVALID),
++      requested_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
++      pending_power_state_(chromeos::DISPLAY_POWER_ALL_ON),
++      has_pending_power_state_(false),
++      pending_power_flags_(kSetDisplayPowerNoFlags),
++      force_configure_(false),
++      next_display_protection_client_id_(1),
++      display_externally_controlled_(false),
++      display_control_changing_(false),
++      displays_suspended_(false),
++      layout_manager_(new DisplayLayoutManagerImpl(this)),
++      weak_ptr_factory_(this) {}
++
++DisplayConfigurator::~DisplayConfigurator() {
++  if (native_display_delegate_)
++    native_display_delegate_->RemoveObserver(this);
++
++  CallAndClearInProgressCallbacks(false);
++  CallAndClearQueuedCallbacks(false);
++
++  while (!query_protection_callbacks_.empty()) {
++    query_protection_callbacks_.front().Run(false, 0, 0);
++    query_protection_callbacks_.pop();
++  }
++
++  while (!set_protection_callbacks_.empty()) {
++    set_protection_callbacks_.front().Run(false);
++    set_protection_callbacks_.pop();
++  }
++}
++
++void DisplayConfigurator::SetDelegateForTesting(
++    std::unique_ptr<NativeDisplayDelegate> display_delegate) {
++  DCHECK(!native_display_delegate_);
++
++  native_display_delegate_ = std::move(display_delegate);
++  configure_display_ = true;
++}
++
++void DisplayConfigurator::SetInitialDisplayPower(
++    chromeos::DisplayPowerState power_state) {
++  DCHECK_EQ(current_display_state_, MULTIPLE_DISPLAY_STATE_INVALID);
++  requested_power_state_ = current_power_state_ = power_state;
++  NotifyPowerStateObservers();
++}
++
++void DisplayConfigurator::Init(
++    std::unique_ptr<NativeDisplayDelegate> display_delegate,
++    bool is_panel_fitting_enabled) {
++  is_panel_fitting_enabled_ = is_panel_fitting_enabled;
++  if (!configure_display_ || display_externally_controlled_)
++    return;
++
++  // If the delegate is already initialized don't update it (For example, tests
++  // set their own delegates).
++  if (!native_display_delegate_)
++    native_display_delegate_ = std::move(display_delegate);
++
++  native_display_delegate_->AddObserver(this);
++}
++
++void DisplayConfigurator::TakeControl(const DisplayControlCallback& callback) {
++  if (display_control_changing_) {
++    callback.Run(false);
++    return;
++  }
++
++  if (!display_externally_controlled_) {
++    callback.Run(true);
++    return;
++  }
++
++  display_control_changing_ = true;
++  native_display_delegate_->TakeDisplayControl(
++      base::Bind(&DisplayConfigurator::OnDisplayControlTaken,
++                 weak_ptr_factory_.GetWeakPtr(), callback));
++}
++
++void DisplayConfigurator::OnDisplayControlTaken(
++    const DisplayControlCallback& callback,
++    bool success) {
++  display_control_changing_ = false;
++  display_externally_controlled_ = !success;
++  if (success) {
++    // Force a configuration since the display configuration may have changed.
++    force_configure_ = true;
++    // Restore the last power state used before releasing control.
++    SetDisplayPower(requested_power_state_, kSetDisplayPowerNoFlags,
++                    base::Bind(&DoNothing));
++  }
++
++  callback.Run(success);
++}
++
++void DisplayConfigurator::RelinquishControl(
++    const DisplayControlCallback& callback) {
++  if (display_control_changing_) {
++    callback.Run(false);
++    return;
++  }
++
++  if (display_externally_controlled_) {
++    callback.Run(true);
++    return;
++  }
++
++  // For simplicity, just fail if in the middle of a display configuration.
++  if (configuration_task_) {
++    callback.Run(false);
++    return;
++  }
++
++  display_control_changing_ = true;
++
++  // Turn off the displays before releasing control since we're no longer using
++  // them for output.
++  SetDisplayPowerInternal(
++      chromeos::DISPLAY_POWER_ALL_OFF, kSetDisplayPowerNoFlags,
++      base::Bind(&DisplayConfigurator::SendRelinquishDisplayControl,
++                 weak_ptr_factory_.GetWeakPtr(), callback));
++}
++
++void DisplayConfigurator::SendRelinquishDisplayControl(
++    const DisplayControlCallback& callback,
++    bool success) {
++  if (success) {
++    // Set the flag early such that an incoming configuration event won't start
++    // while we're releasing control of the displays.
++    display_externally_controlled_ = true;
++    native_display_delegate_->RelinquishDisplayControl(
++        base::Bind(&DisplayConfigurator::OnDisplayControlRelinquished,
++                   weak_ptr_factory_.GetWeakPtr(), callback));
++  } else {
++    display_control_changing_ = false;
++    callback.Run(false);
++  }
++}
++
++void DisplayConfigurator::OnDisplayControlRelinquished(
++    const DisplayControlCallback& callback,
++    bool success) {
++  display_control_changing_ = false;
++  display_externally_controlled_ = success;
++  if (!success) {
++    force_configure_ = true;
++    RunPendingConfiguration();
++  }
++
++  callback.Run(success);
++}
++
++void DisplayConfigurator::ForceInitialConfigure(
++    uint32_t background_color_argb) {
++  if (!configure_display_ || display_externally_controlled_)
++    return;
++
++  DCHECK(native_display_delegate_);
++  native_display_delegate_->Initialize();
++
++  // ForceInitialConfigure should be the first configuration so there shouldn't
++  // be anything scheduled.
++  DCHECK(!configuration_task_);
++
++  configuration_task_.reset(new UpdateDisplayConfigurationTask(
++      native_display_delegate_.get(), layout_manager_.get(),
++      requested_display_state_, requested_power_state_,
++      kSetDisplayPowerForceProbe, background_color_argb, true,
++      base::Bind(&DisplayConfigurator::OnConfigured,
++                 weak_ptr_factory_.GetWeakPtr())));
++  configuration_task_->Run();
++}
++
++uint64_t DisplayConfigurator::RegisterContentProtectionClient() {
++  if (!configure_display_ || display_externally_controlled_)
++    return INVALID_CLIENT_ID;
++
++  return next_display_protection_client_id_++;
++}
++
++void DisplayConfigurator::UnregisterContentProtectionClient(
++    uint64_t client_id) {
++  client_protection_requests_.erase(client_id);
++
++  ContentProtections protections;
++  for (const auto& requests_pair : client_protection_requests_) {
++    for (const auto& protections_pair : requests_pair.second) {
++      protections[protections_pair.first] |= protections_pair.second;
++    }
++  }
++
++  set_protection_callbacks_.push(base::Bind(&DoNothing));
++}
++
++void DisplayConfigurator::OnContentProtectionClientUnregistered(bool success) {
++  DCHECK(!content_protection_tasks_.empty());
++  content_protection_tasks_.pop();
++
++  DCHECK(!set_protection_callbacks_.empty());
++  SetProtectionCallback callback = set_protection_callbacks_.front();
++  set_protection_callbacks_.pop();
++
++  if (!content_protection_tasks_.empty())
++    content_protection_tasks_.front().Run();
++}
++
++void DisplayConfigurator::QueryContentProtectionStatus(
++    uint64_t client_id,
++    int64_t display_id,
++    const QueryProtectionCallback& callback) {
++  // Exclude virtual displays so that protected content will not be recaptured
++  // through the cast stream.
++  for (const DisplaySnapshot* display : cached_displays_) {
++    if (display->display_id() == display_id &&
++        !IsPhysicalDisplayType(display->type())) {
++      callback.Run(false, 0, 0);
++      return;
++    }
++  }
++
++  if (!configure_display_ || display_externally_controlled_) {
++    callback.Run(false, 0, 0);
++    return;
++  }
++}
++
++void DisplayConfigurator::OnContentProtectionQueried(
++    uint64_t client_id,
++    int64_t display_id,
++    QueryContentProtectionTask::Response task_response) {
++  bool success = task_response.success;
++  uint32_t link_mask = task_response.link_mask;
++  uint32_t protection_mask = 0;
++
++  // Don't reveal protections requested by other clients.
++  ProtectionRequests::iterator it = client_protection_requests_.find(client_id);
++  if (success && it != client_protection_requests_.end()) {
++    uint32_t requested_mask = 0;
++    if (it->second.find(display_id) != it->second.end())
++      requested_mask = it->second[display_id];
++    protection_mask =
++        task_response.enabled & ~task_response.unfulfilled & requested_mask;
++  }
++
++  DCHECK(!content_protection_tasks_.empty());
++  content_protection_tasks_.pop();
++
++  DCHECK(!query_protection_callbacks_.empty());
++  QueryProtectionCallback callback = query_protection_callbacks_.front();
++  query_protection_callbacks_.pop();
++  callback.Run(success, link_mask, protection_mask);
++
++  if (!content_protection_tasks_.empty())
++    content_protection_tasks_.front().Run();
++}
++
++void DisplayConfigurator::SetContentProtection(
++    uint64_t client_id,
++    int64_t display_id,
++    uint32_t desired_method_mask,
++    const SetProtectionCallback& callback) {
++  if (!configure_display_ || display_externally_controlled_) {
++    callback.Run(false);
++    return;
++  }
++
++  ContentProtections protections;
++  for (const auto& requests_pair : client_protection_requests_) {
++    for (const auto& protections_pair : requests_pair.second) {
++      if (requests_pair.first == client_id &&
++          protections_pair.first == display_id)
++        continue;
++
++      protections[protections_pair.first] |= protections_pair.second;
++    }
++  }
++  protections[display_id] |= desired_method_mask;
++
++  set_protection_callbacks_.push(callback);
++}
++
++void DisplayConfigurator::OnSetContentProtectionCompleted(
++    uint64_t client_id,
++    int64_t display_id,
++    uint32_t desired_method_mask,
++    bool success) {
++  DCHECK(!content_protection_tasks_.empty());
++  content_protection_tasks_.pop();
++
++  DCHECK(!set_protection_callbacks_.empty());
++  SetProtectionCallback callback = set_protection_callbacks_.front();
++  set_protection_callbacks_.pop();
++
++  if (!success) {
++    callback.Run(false);
++    return;
++  }
++
++  if (desired_method_mask == CONTENT_PROTECTION_METHOD_NONE) {
++    if (client_protection_requests_.find(client_id) !=
++        client_protection_requests_.end()) {
++      client_protection_requests_[client_id].erase(display_id);
++      if (client_protection_requests_[client_id].size() == 0)
++        client_protection_requests_.erase(client_id);
++    }
++  } else {
++    client_protection_requests_[client_id][display_id] = desired_method_mask;
++  }
++
++  callback.Run(true);
++  if (!content_protection_tasks_.empty())
++    content_protection_tasks_.front().Run();
++}
++
++std::vector<ColorCalibrationProfile>
++DisplayConfigurator::GetAvailableColorCalibrationProfiles(int64_t display_id) {
++  return std::vector<ColorCalibrationProfile>();
++}
++
++bool DisplayConfigurator::SetColorCalibrationProfile(
++    int64_t display_id,
++    ColorCalibrationProfile new_profile) {
++  for (const DisplaySnapshot* display : cached_displays_) {
++    if (display->display_id() == display_id &&
++        IsPhysicalDisplayType(display->type())) {
++      return native_display_delegate_->SetColorCalibrationProfile(*display,
++                                                                  new_profile);
++    }
++  }
++
++  return false;
++}
++
++bool DisplayConfigurator::SetColorCorrection(
++    int64_t display_id,
++    const std::vector<GammaRampRGBEntry>& degamma_lut,
++    const std::vector<GammaRampRGBEntry>& gamma_lut,
++    const std::vector<float>& correction_matrix) {
++  for (const DisplaySnapshot* display : cached_displays_) {
++    if (display->display_id() == display_id)
++      return native_display_delegate_->SetColorCorrection(
++          *display, degamma_lut, gamma_lut, correction_matrix);
++  }
++
++  return false;
++}
++
++void DisplayConfigurator::PrepareForExit() {
++  configure_display_ = false;
++}
++
++void DisplayConfigurator::SetDisplayPowerInternal(
++    chromeos::DisplayPowerState power_state,
++    int flags,
++    const ConfigurationCallback& callback) {
++  // Only skip if the current power state is the same and the latest requested
++  // power state is the same. If |pending_power_state_ != current_power_state_|
++  // then there is a current task pending or the last configuration failed. In
++  // either case request a new configuration to make sure the state is
++  // consistent with the expectations.
++  if (power_state == current_power_state_ &&
++      power_state == pending_power_state_ &&
++      !(flags & kSetDisplayPowerForceProbe)) {
++    callback.Run(true);
++    return;
++  }
++
++  pending_power_state_ = power_state;
++  has_pending_power_state_ = true;
++  pending_power_flags_ = flags;
++  queued_configuration_callbacks_.push_back(callback);
++
++  if (configure_timer_.IsRunning()) {
++    // If there is a configuration task scheduled, avoid performing
++    // configuration immediately. Instead reset the timer to wait for things to
++    // settle.
++    configure_timer_.Reset();
++    return;
++  }
++
++  RunPendingConfiguration();
++}
++
++void DisplayConfigurator::SetDisplayPower(
++    chromeos::DisplayPowerState power_state,
++    int flags,
++    const ConfigurationCallback& callback) {
++  if (!configure_display_ || display_externally_controlled_) {
++    callback.Run(false);
++    return;
++  }
++
++  VLOG(1) << "SetDisplayPower: power_state="
++          << DisplayPowerStateToString(power_state) << " flags=" << flags
++          << ", configure timer="
++          << (configure_timer_.IsRunning() ? "Running" : "Stopped");
++
++  requested_power_state_ = power_state;
++  SetDisplayPowerInternal(requested_power_state_, flags, callback);
++}
++
++void DisplayConfigurator::SetDisplayMode(MultipleDisplayState new_state) {
++  if (!configure_display_ || display_externally_controlled_)
++    return;
++
++  VLOG(1) << "SetDisplayMode: state="
++          << MultipleDisplayStateToString(new_state);
++  if (current_display_state_ == new_state) {
++    // Cancel software mirroring if the state is moving from
++    // MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED to
++    // MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED.
++    if (mirroring_controller_ &&
++        new_state == MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED)
++      mirroring_controller_->SetSoftwareMirroring(false);
++    NotifyDisplayStateObservers(true, new_state);
++    return;
++  }
++
++  requested_display_state_ = new_state;
++
++  RunPendingConfiguration();
++}
++
++void DisplayConfigurator::OnConfigurationChanged() {
++  // Don't do anything if the displays are currently suspended.  Instead we will
++  // probe and reconfigure the displays if necessary in ResumeDisplays().
++  if (displays_suspended_) {
++    VLOG(1) << "Displays are currently suspended.  Not attempting to "
++            << "reconfigure them.";
++    return;
++  }
++
++  // Configure displays with |kConfigureDelayMs| delay,
++  // so that time-consuming ConfigureDisplays() won't be called multiple times.
++  configure_timer_.Start(FROM_HERE,
++                         base::TimeDelta::FromMilliseconds(kConfigureDelayMs),
++                         this, &DisplayConfigurator::ConfigureDisplays);
++}
++
++void DisplayConfigurator::OnDisplaySnapshotsInvalidated() {
++  VLOG(1) << "Display snapshots invalidated.";
++  cached_displays_.clear();
++}
++
++void DisplayConfigurator::AddObserver(Observer* observer) {
++  observers_.AddObserver(observer);
++}
++
++void DisplayConfigurator::RemoveObserver(Observer* observer) {
++  observers_.RemoveObserver(observer);
++}
++
++void DisplayConfigurator::SuspendDisplays(
++    const ConfigurationCallback& callback) {
++  if (!configure_display_ || display_externally_controlled_) {
++    callback.Run(false);
++    return;
++  }
++
++  displays_suspended_ = true;
++
++  // Stop |configure_timer_| because we will force probe and configure all the
++  // displays at resume time anyway.
++  configure_timer_.Stop();
++
++  // Turn off the displays for suspend. This way, if we wake up for lucid sleep,
++  // the displays will not turn on (all displays should be off for lucid sleep
++  // unless explicitly requested by lucid sleep code). Use
++  // SetDisplayPowerInternal so requested_power_state_ is maintained.
++  SetDisplayPowerInternal(chromeos::DISPLAY_POWER_ALL_OFF,
++                          kSetDisplayPowerNoFlags, callback);
++
++  // We need to make sure that the monitor configuration we just did actually
++  // completes before we return.
++  native_display_delegate_->SyncWithServer();
++}
++
++void DisplayConfigurator::ResumeDisplays() {
++  if (!configure_display_ || display_externally_controlled_)
++    return;
++
++  displays_suspended_ = false;
++
++  if (current_display_state_ == MULTIPLE_DISPLAY_STATE_DUAL_MIRROR ||
++      current_display_state_ == MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED ||
++      current_display_state_ == MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED) {
++    // When waking up from suspend while being in a multi display mode, we
++    // schedule a delayed forced configuration, which will make
++    // SetDisplayPowerInternal() avoid performing the configuration immediately.
++    // This gives a chance to wait for all displays to be added and detected
++    // before configuration is performed, so we won't immediately resize the
++    // desktops and the windows on it to fit on a single display.
++    configure_timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(
++                                          kResumeConfigureMultiDisplayDelayMs),
++                           this, &DisplayConfigurator::ConfigureDisplays);
++  }
++
++  // If requested_power_state_ is ALL_OFF due to idle suspend, powerd will turn
++  // the display power on when it enables the backlight.
++  SetDisplayPower(requested_power_state_, kSetDisplayPowerNoFlags,
++                  base::Bind(&DoNothing));
++}
++
++void DisplayConfigurator::ConfigureDisplays() {
++  if (!configure_display_ || display_externally_controlled_)
++    return;
++
++  force_configure_ = true;
++  RunPendingConfiguration();
++}
++
++void DisplayConfigurator::RunPendingConfiguration() {
++  // Configuration task is currently running. Do not start a second
++  // configuration.
++  if (configuration_task_)
++    return;
++
++  if (!ShouldRunConfigurationTask()) {
++    LOG(ERROR) << "Called RunPendingConfiguration without any changes"
++                  " requested";
++    CallAndClearQueuedCallbacks(true);
++    return;
++  }
++
++  configuration_task_.reset(new UpdateDisplayConfigurationTask(
++      native_display_delegate_.get(), layout_manager_.get(),
++      requested_display_state_, pending_power_state_, pending_power_flags_, 0,
++      force_configure_, base::Bind(&DisplayConfigurator::OnConfigured,
++                                   weak_ptr_factory_.GetWeakPtr())));
++  configuration_task_->SetVirtualDisplaySnapshots(virtual_display_snapshots_);
++
++  // Reset the flags before running the task; otherwise it may end up scheduling
++  // another configuration.
++  force_configure_ = false;
++  pending_power_flags_ = kSetDisplayPowerNoFlags;
++  has_pending_power_state_ = false;
++  requested_display_state_ = MULTIPLE_DISPLAY_STATE_INVALID;
++
++  DCHECK(in_progress_configuration_callbacks_.empty());
++  in_progress_configuration_callbacks_.swap(queued_configuration_callbacks_);
++
++  configuration_task_->Run();
++}
++
++void DisplayConfigurator::OnConfigured(
++    bool success,
++    const std::vector<DisplaySnapshot*>& displays,
++    const gfx::Size& framebuffer_size,
++    MultipleDisplayState new_display_state,
++    chromeos::DisplayPowerState new_power_state) {
++  VLOG(1) << "OnConfigured: success=" << success << " new_display_state="
++          << MultipleDisplayStateToString(new_display_state)
++          << " new_power_state=" << DisplayPowerStateToString(new_power_state);
++
++  cached_displays_ = displays;
++  if (success) {
++    chromeos::DisplayPowerState old_power_state = current_power_state_;
++    current_display_state_ = new_display_state;
++    current_power_state_ = new_power_state;
++
++    // |framebuffer_size| is empty in software mirroring mode, headless mode,
++    // or all displays are off.
++    DCHECK(!framebuffer_size.IsEmpty() ||
++           (mirroring_controller_ &&
++            mirroring_controller_->SoftwareMirroringEnabled()) ||
++           new_display_state == MULTIPLE_DISPLAY_STATE_HEADLESS ||
++           new_power_state == chromeos::DISPLAY_POWER_ALL_OFF);
++
++    if (!framebuffer_size.IsEmpty())
++      framebuffer_size_ = framebuffer_size;
++
++    // If the pending power state hasn't changed then make sure that value
++    // gets updated as well since the last requested value may have been
++    // dependent on certain conditions (ie: if only the internal monitor was
++    // present).
++    if (!has_pending_power_state_)
++      pending_power_state_ = new_power_state;
++
++    if (old_power_state != current_power_state_)
++      NotifyPowerStateObservers();
++  }
++
++  configuration_task_.reset();
++  NotifyDisplayStateObservers(success, new_display_state);
++  CallAndClearInProgressCallbacks(success);
++
++  if (success && !configure_timer_.IsRunning() &&
++      ShouldRunConfigurationTask()) {
++    configure_timer_.Start(FROM_HERE,
++                           base::TimeDelta::FromMilliseconds(kConfigureDelayMs),
++                           this, &DisplayConfigurator::RunPendingConfiguration);
++  } else {
++    // If a new configuration task isn't scheduled respond to all queued
++    // callbacks (for example if requested state is current state).
++    if (!configure_timer_.IsRunning())
++      CallAndClearQueuedCallbacks(success);
++  }
++}
++
++bool DisplayConfigurator::ShouldRunConfigurationTask() const {
++  if (force_configure_)
++    return true;
++
++  // Schedule if there is a request to change the display state.
++  if (requested_display_state_ != current_display_state_ &&
++      requested_display_state_ != MULTIPLE_DISPLAY_STATE_INVALID)
++    return true;
++
++  // Schedule if there is a request to change the power state.
++  if (has_pending_power_state_)
++    return true;
++
++  return false;
++}
++
++void DisplayConfigurator::CallAndClearInProgressCallbacks(bool success) {
++  for (const auto& callback : in_progress_configuration_callbacks_)
++    callback.Run(success);
++
++  in_progress_configuration_callbacks_.clear();
++}
++
++void DisplayConfigurator::CallAndClearQueuedCallbacks(bool success) {
++  for (const auto& callback : queued_configuration_callbacks_)
++    callback.Run(success);
++
++  queued_configuration_callbacks_.clear();
++}
++
++void DisplayConfigurator::NotifyDisplayStateObservers(
++    bool success,
++    MultipleDisplayState attempted_state) {
++  if (success) {
++    for (Observer& observer : observers_)
++      observer.OnDisplayModeChanged(cached_displays_);
++  } else {
++    for (Observer& observer : observers_)
++      observer.OnDisplayModeChangeFailed(cached_displays_, attempted_state);
++  }
++}
++
++void DisplayConfigurator::NotifyPowerStateObservers() {
++  for (Observer& observer : observers_)
++    observer.OnPowerStateChanged(current_power_state_);
++}
++
++int64_t DisplayConfigurator::AddVirtualDisplay(const gfx::Size& display_size) {
++  if (last_virtual_display_id_ == 0xff) {
++    LOG(WARNING) << "Exceeded virtual display id limit";
++    return kInvalidDisplayId;
++  }
++
++  int64_t display_id = GenerateDisplayID(kReservedManufacturerID, 0x0,
++                                         ++last_virtual_display_id_);
++  virtual_display_snapshots_.push_back(
++      base::MakeUnique<DisplaySnapshotVirtual>(display_id, display_size));
++  ConfigureDisplays();
++
++  return display_id;
++}
++
++bool DisplayConfigurator::RemoveVirtualDisplay(int64_t display_id) {
++  bool display_found = false;
++  for (auto it = virtual_display_snapshots_.begin();
++       it != virtual_display_snapshots_.end(); ++it) {
++    if ((*it)->display_id() == display_id) {
++      virtual_display_snapshots_.erase(it);
++      ConfigureDisplays();
++      display_found = true;
++      break;
++    }
++  }
++
++  if (!display_found)
++    return false;
++
++  int64_t max_display_id = 0;
++  for (const auto& display : virtual_display_snapshots_)
++    max_display_id = std::max(max_display_id, display->display_id());
++  last_virtual_display_id_ = max_display_id & 0xff;
++
++  return true;
++}
++
++bool DisplayConfigurator::IsDisplayOn() const {
++  return current_power_state_ != chromeos::DISPLAY_POWER_ALL_OFF;
++}
++
++}  // namespace display
+diff --git a/services/ui/display/display_configurator.h b/services/ui/display/display_configurator.h
+new file mode 100644
+index 0000000..ee1f57b
+--- /dev/null
++++ b/services/ui/display/display_configurator.h
+@@ -0,0 +1,491 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CONFIGURATOR_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CONFIGURATOR_H_
++
++#include <stdint.h>
++
++#include <map>
++#include <memory>
++#include <queue>
++#include <string>
++#include <vector>
++
++#include "base/event_types.h"
++#include "base/macros.h"
++#include "base/memory/weak_ptr.h"
++#include "base/observer_list.h"
++#include "base/timer/timer.h"
++#include "ui/display/manager/chromeos/query_content_protection_task.h"
++#include "ui/display/manager/display_manager_export.h"
++#include "ui/display/types/display_constants.h"
++#include "ui/display/types/native_display_observer.h"
++#include "ui/display/util/display_util.h"
++#include "ui/gfx/geometry/size.h"
++
++namespace gfx {
++class Size;
++}
++
++namespace chromeos {
++enum DisplayPowerState {
++  DISPLAY_POWER_ALL_ON = 0,
++  DISPLAY_POWER_ALL_OFF = 1,
++  DISPLAY_POWER_INTERNAL_OFF_EXTERNAL_ON = 2,
++  DISPLAY_POWER_INTERNAL_ON_EXTERNAL_OFF = 3,
++};
++}
++
++namespace display {
++struct GammaRampRGBEntry;
++class DisplayLayoutManager;
++class DisplayMode;
++class DisplaySnapshot;
++class NativeDisplayDelegate;
++class UpdateDisplayConfigurationTask;
++
++// This class interacts directly with the system display configurator.
++class DISPLAY_MANAGER_EXPORT DisplayConfigurator
++    : public NativeDisplayObserver {
++ public:
++  enum : uint64_t {
++    INVALID_CLIENT_ID = 0,
++  };
++
++  using ConfigurationCallback = base::Callback<void(bool /* success */)>;
++
++  using SetProtectionCallback = base::Callback<void(bool /* success */)>;
++
++  // link_mask: The type of connected display links, which is a bitmask of
++  // DisplayConnectionType values.
++  // protection_mask: The desired protection methods, which is a bitmask of the
++  // ContentProtectionMethod values.
++  using QueryProtectionCallback =
++      base::Callback<void(bool /* success */,
++                          uint32_t /* link_mask */,
++                          uint32_t /* protection_mask */)>;
++  using DisplayControlCallback = base::Callback<void(bool /* success */)>;
++
++  using DisplayStateList = std::vector<DisplaySnapshot*>;
++
++  // Mapping a display_id to a protection request bitmask.
++  using ContentProtections = std::map<int64_t, uint32_t>;
++
++  class Observer {
++   public:
++    virtual ~Observer() {}
++
++    // Called after the display mode has been changed. |display| contains the
++    // just-applied configuration. Note that the X server is no longer grabbed
++    // when this method is called, so the actual configuration could've changed
++    // already.
++    virtual void OnDisplayModeChanged(const DisplayStateList& displays) {}
++
++    // Called after a display mode change attempt failed. |displays| contains
++    // displays that are detected when failed.
++    // |failed_new_state| is the new state which the system failed to enter.
++    virtual void OnDisplayModeChangeFailed(
++        const DisplayStateList& displays,
++        MultipleDisplayState failed_new_state) {}
++
++    // Called after the power state has been changed. |power_state| contains
++    // the just-applied power state.
++    virtual void OnPowerStateChanged(chromeos::DisplayPowerState power_state) {}
++  };
++
++  // Interface for classes that make decisions about which display state
++  // should be used.
++  class StateController {
++   public:
++    virtual ~StateController() {}
++
++    // Called when displays are detected.
++    virtual MultipleDisplayState GetStateForDisplayIds(
++        const DisplayConfigurator::DisplayStateList& outputs) const = 0;
++
++    // Queries the resolution (|size|) in pixels to select display mode for the
++    // given display id.
++    virtual bool GetResolutionForDisplayId(int64_t display_id,
++                                           gfx::Size* size) const = 0;
++  };
++
++  // Interface for classes that implement software based mirroring.
++  class SoftwareMirroringController {
++   public:
++    virtual ~SoftwareMirroringController() {}
++
++    // Called when the hardware mirroring failed.
++    virtual void SetSoftwareMirroring(bool enabled) = 0;
++    virtual bool SoftwareMirroringEnabled() const = 0;
++  };
++
++  // Helper class used by tests.
++  class TestApi {
++   public:
++    TestApi(DisplayConfigurator* configurator) : configurator_(configurator) {}
++    ~TestApi() {}
++
++    // If |configure_timer_| is started, stops the timer, runs
++    // ConfigureDisplays(), and returns true; returns false otherwise.
++    bool TriggerConfigureTimeout() WARN_UNUSED_RESULT;
++
++    // Gets the current delay of the |configure_timer_| if it's running, or zero
++    // time delta otherwise.
++    base::TimeDelta GetConfigureDelay() const;
++
++   private:
++    DisplayConfigurator* configurator_;  // not owned
++
++    DISALLOW_COPY_AND_ASSIGN(TestApi);
++  };
++
++  // Flags that can be passed to SetDisplayPower().
++  static const int kSetDisplayPowerNoFlags;
++  // Configure displays even if the passed-in state matches |power_state_|.
++  static const int kSetDisplayPowerForceProbe;
++  // Do not change the state if multiple displays are connected or if the
++  // only connected display is external.
++  static const int kSetDisplayPowerOnlyIfSingleInternalDisplay;
++
++  // Gap between screens so cursor at bottom of active display doesn't
++  // partially appear on top of inactive display. Higher numbers guard
++  // against larger cursors, but also waste more memory.
++  // For simplicity, this is hard-coded to avoid the complexity of always
++  // determining the DPI of the screen and rationalizing which screen we
++  // need to use for the DPI calculation.
++  // See crbug.com/130188 for initial discussion.
++  static const int kVerticalGap = 60;
++
++  // The delay to perform configuration after RRNotify. See the comment for
++  // |configure_timer_|.
++  static const int kConfigureDelayMs = 500;
++
++  // The delay to perform configuration after waking up from suspend when in
++  // multi display mode. Should be bigger than |kConfigureDelayMs|. Generally
++  // big enough for external displays to be detected and added.
++  // crbug.com/614624.
++  static const int kResumeConfigureMultiDisplayDelayMs = 2000;
++
++  // Returns the mode within |display| that matches the given size with highest
++  // refresh rate. Returns None if no matching display was found.
++  static const DisplayMode* FindDisplayModeMatchingSize(
++      const DisplaySnapshot& display,
++      const gfx::Size& size);
++
++  DisplayConfigurator();
++  ~DisplayConfigurator() override;
++
++  MultipleDisplayState display_state() const { return current_display_state_; }
++  chromeos::DisplayPowerState requested_power_state() const {
++    return requested_power_state_;
++  }
++  const gfx::Size framebuffer_size() const { return framebuffer_size_; }
++  const std::vector<DisplaySnapshot*>& cached_displays() const {
++    return cached_displays_;
++  }
++  void set_state_controller(StateController* controller) {
++    state_controller_ = controller;
++  }
++  void set_mirroring_controller(SoftwareMirroringController* controller) {
++    mirroring_controller_ = controller;
++  }
++  void set_configure_display(bool configure_display) {
++    configure_display_ = configure_display;
++  }
++  chromeos::DisplayPowerState current_power_state() const {
++    return current_power_state_;
++  }
++
++  // Called when an external process no longer needs to control the display
++  // and Chrome can take control.
++  void TakeControl(const DisplayControlCallback& callback);
++
++  // Called when an external process needs to control the display and thus
++  // Chrome should relinquish it.
++  void RelinquishControl(const DisplayControlCallback& callback);
++
++  // Replaces |native_display_delegate_| with the delegate passed in and sets
++  // |configure_display_| to true. Should be called before Init().
++  void SetDelegateForTesting(
++      std::unique_ptr<NativeDisplayDelegate> display_delegate);
++
++  // Sets the initial value of |power_state_|.  Must be called before Start().
++  void SetInitialDisplayPower(chromeos::DisplayPowerState power_state);
++
++  // Initialization, must be called right after constructor.
++  // |is_panel_fitting_enabled| indicates hardware panel fitting support.
++  void Init(std::unique_ptr<NativeDisplayDelegate> delegate,
++            bool is_panel_fitting_enabled);
++
++  // Does initial configuration of displays during startup.
++  // If |background_color_argb| is non zero and there are multiple displays,
++  // DisplayConfigurator sets the background color of X's RootWindow to this
++  // color.
++  void ForceInitialConfigure(uint32_t background_color_argb);
++
++  // Stop handling display configuration events/requests.
++  void PrepareForExit();
++
++  // Called when powerd notifies us that some set of displays should be turned
++  // on or off.  This requires enabling or disabling the CRTC associated with
++  // the display(s) in question so that the low power state is engaged.
++  // |flags| contains bitwise-or-ed kSetDisplayPower* values. After the
++  // configuration finishes |callback| is called with the status of the
++  // operation.
++  void SetDisplayPower(chromeos::DisplayPowerState power_state,
++                       int flags,
++                       const ConfigurationCallback& callback);
++
++  // Force switching the display mode to |new_state|. Returns false if
++  // switching failed (possibly because |new_state| is invalid for the
++  // current set of connected displays).
++  void SetDisplayMode(MultipleDisplayState new_state);
++
++  // NativeDisplayDelegate::Observer overrides:
++  void OnConfigurationChanged() override;
++  void OnDisplaySnapshotsInvalidated() override;
++
++  void AddObserver(Observer* observer);
++  void RemoveObserver(Observer* observer);
++
++  // Sets all the displays into pre-suspend mode; usually this means
++  // configure them for their resume state. This allows faster resume on
++  // machines where display configuration is slow. On completion of the display
++  // configuration |callback| is executed synchronously or asynchronously.
++  void SuspendDisplays(const ConfigurationCallback& callback);
++
++  // Reprobes displays to handle changes made while the system was
++  // suspended.
++  void ResumeDisplays();
++
++  // Registers a client for display protection and requests a client id. Returns
++  // 0 if requesting failed.
++  uint64_t RegisterContentProtectionClient();
++
++  // Unregisters the client.
++  void UnregisterContentProtectionClient(uint64_t client_id);
++
++  // Queries link status and protection status. |callback| is used to respond
++  // to the query.
++  void QueryContentProtectionStatus(uint64_t client_id,
++                                    int64_t display_id,
++                                    const QueryProtectionCallback& callback);
++
++  // Requests the desired protection methods.
++  // |protection_mask| is the desired protection methods, which is a bitmask
++  // of the ContentProtectionMethod values.
++  // Returns true when the protection request has been made.
++  void SetContentProtection(uint64_t client_id,
++                            int64_t display_id,
++                            uint32_t protection_mask,
++                            const SetProtectionCallback& callback);
++
++  // Checks the available color profiles for |display_id| and fills the result
++  // into |profiles|.
++  std::vector<ColorCalibrationProfile> GetAvailableColorCalibrationProfiles(
++      int64_t display_id);
++
++  // Updates the color calibration to |new_profile|.
++  bool SetColorCalibrationProfile(int64_t display_id,
++                                  ColorCalibrationProfile new_profile);
++
++  // Enables/disables virtual display.
++  int64_t AddVirtualDisplay(const gfx::Size& display_size);
++  bool RemoveVirtualDisplay(int64_t display_id);
++
++  // Returns true if there is at least one display on.
++  bool IsDisplayOn() const;
++
++  // Sets the gamma, degamma and correction matrix for |display_id| to the
++  // values in |degamma_lut|, |gamma_lut| and |correction_matrix|.
++  bool SetColorCorrection(int64_t display_id,
++                          const std::vector<GammaRampRGBEntry>& degamma_lut,
++                          const std::vector<GammaRampRGBEntry>& gamma_lut,
++                          const std::vector<float>& correction_matrix);
++
++ private:
++  class DisplayLayoutManagerImpl;
++
++  // Mapping a client to its protection request.
++  using ProtectionRequests = std::map<uint64_t, ContentProtections>;
++
++  // Updates |pending_*| members and applies the passed-in state. |callback| is
++  // invoked (perhaps synchronously) on completion.
++  void SetDisplayPowerInternal(chromeos::DisplayPowerState power_state,
++                               int flags,
++                               const ConfigurationCallback& callback);
++
++  // Configures displays. Invoked by |configure_timer_|.
++  void ConfigureDisplays();
++
++  // Notifies observers about an attempted state change.
++  void NotifyDisplayStateObservers(bool success,
++                                   MultipleDisplayState attempted_state);
++
++  // Notifies observers about a power state change.
++  void NotifyPowerStateObservers();
++
++  // Returns the display state that should be used with |cached_displays_| while
++  // in |power_state|.
++  MultipleDisplayState ChooseDisplayState(
++      chromeos::DisplayPowerState power_state) const;
++
++  // Applies display protections according to requests.
++  bool ApplyProtections(const ContentProtections& requests);
++
++  // If |configuration_task_| isn't initialized, initializes it and starts the
++  // configuration task.
++  void RunPendingConfiguration();
++
++  // Callback for |configuration_taks_|. When the configuration process finishes
++  // this is called with the result (|success|) and the updated display state.
++  void OnConfigured(bool success,
++                    const std::vector<DisplaySnapshot*>& displays,
++                    const gfx::Size& framebuffer_size,
++                    MultipleDisplayState new_display_state,
++                    chromeos::DisplayPowerState new_power_state);
++
++  // Helps in identifying if a configuration task needs to be scheduled.
++  // Return true if any of the |requested_*| parameters have been updated. False
++  // otherwise.
++  bool ShouldRunConfigurationTask() const;
++
++  // Helper functions which will call the callbacks in
++  // |in_progress_configuration_callbacks_| and
++  // |queued_configuration_callbacks_| and clear the lists after. |success| is
++  // the configuration status used when calling the callbacks.
++  void CallAndClearInProgressCallbacks(bool success);
++  void CallAndClearQueuedCallbacks(bool success);
++
++  // Content protection callbacks called by the tasks when they finish. These
++  // are responsible for destroying the task, replying to the caller that made
++  // the task and starting the a new content protection task if one is queued.
++  void OnContentProtectionQueried(
++      uint64_t client_id,
++      int64_t display_id,
++      QueryContentProtectionTask::Response response);
++  void OnSetContentProtectionCompleted(uint64_t client_id,
++                                       int64_t display_id,
++                                       uint32_t desired_method_mask,
++                                       bool success);
++  void OnContentProtectionClientUnregistered(bool success);
++
++  // Callbacks used to signal when the native platform has released/taken
++  // display control.
++  void OnDisplayControlTaken(const DisplayControlCallback& callback,
++                             bool success);
++  void OnDisplayControlRelinquished(const DisplayControlCallback& callback,
++                                    bool success);
++
++  // Helper function that sends the actual command.
++  // |callback| is called upon completion of the relinquish command.
++  // |success| is the result from calling SetDisplayPowerInternal() in
++  // RelinquishDisplay().
++  void SendRelinquishDisplayControl(const DisplayControlCallback& callback,
++                                    bool success);
++
++  StateController* state_controller_;
++  SoftwareMirroringController* mirroring_controller_;
++  std::unique_ptr<NativeDisplayDelegate> native_display_delegate_;
++
++  // Used to enable modes which rely on panel fitting.
++  bool is_panel_fitting_enabled_;
++
++  // This is detected by the constructor to determine whether or not we should
++  // be enabled.  If we aren't running on Chrome OS, we can't assume that the
++  // Xrandr X11 extension or the Ozone underlying display hotplug system are
++  // supported.
++  // If this flag is set to false, any attempts to change the display
++  // configuration to immediately fail without changing the state.
++  bool configure_display_;
++
++  // Current configuration state.
++  MultipleDisplayState current_display_state_;
++  chromeos::DisplayPowerState current_power_state_;
++
++  // Pending requests. These values are used when triggering the next display
++  // configuration.
++  //
++  // Stores the user requested state or INVALID if nothing was requested.
++  MultipleDisplayState requested_display_state_;
++
++  // Stores the requested power state.
++  chromeos::DisplayPowerState requested_power_state_;
++
++  // The power state used by RunPendingConfiguration(). May be
++  // |requested_power_state_| or DISPLAY_POWER_ALL_OFF for suspend.
++  chromeos::DisplayPowerState pending_power_state_;
++
++  // True if |pending_power_state_| has been changed.
++  bool has_pending_power_state_;
++
++  // Bitwise-or value of the |kSetDisplayPower*| flags defined above.
++  int pending_power_flags_;
++
++  // List of callbacks from callers waiting for the display configuration to
++  // start/finish. Note these callbacks belong to the pending request, not a
++  // request currently active.
++  std::vector<ConfigurationCallback> queued_configuration_callbacks_;
++
++  // List of callbacks belonging to the currently running display configuration
++  // task.
++  std::vector<ConfigurationCallback> in_progress_configuration_callbacks_;
++
++  std::queue<base::Closure> content_protection_tasks_;
++  std::queue<QueryProtectionCallback> query_protection_callbacks_;
++  std::queue<SetProtectionCallback> set_protection_callbacks_;
++
++  // True if the caller wants to force the display configuration process.
++  bool force_configure_;
++
++  // Most-recently-used display configuration. Note that the actual
++  // configuration changes asynchronously.
++  DisplayStateList cached_displays_;
++
++  // Most-recently-used framebuffer size.
++  gfx::Size framebuffer_size_;
++
++  base::ObserverList<Observer> observers_;
++
++  // The timer to delay configuring displays. This is used to aggregate multiple
++  // display configuration events when they are reported in short time spans.
++  // See comment for NativeDisplayEventDispatcherX11 for more details.
++  base::OneShotTimer configure_timer_;
++
++  // Id for next display protection client.
++  uint64_t next_display_protection_client_id_;
++
++  // Display protection requests of each client.
++  ProtectionRequests client_protection_requests_;
++
++  // Display controlled by an external entity.
++  bool display_externally_controlled_;
++
++  // True if a TakeControl or RelinquishControl has been called but the response
++  // hasn't arrived yet.
++  bool display_control_changing_;
++
++  // Whether the displays are currently suspended.
++  bool displays_suspended_;
++
++  // Virtual display control.
++  std::vector<std::unique_ptr<DisplaySnapshot>> virtual_display_snapshots_;
++
++  // Last used virtual display id.
++  uint8_t last_virtual_display_id_ = 0;
++
++  std::unique_ptr<DisplayLayoutManager> layout_manager_;
++
++  std::unique_ptr<UpdateDisplayConfigurationTask> configuration_task_;
++
++  // This must be the last variable.
++  base::WeakPtrFactory<DisplayConfigurator> weak_ptr_factory_;
++
++  DISALLOW_COPY_AND_ASSIGN(DisplayConfigurator);
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_CONFIGURATOR_H_
+diff --git a/services/ui/display/display_layout_manager.h b/services/ui/display/display_layout_manager.h
+new file mode 100644
+index 0000000..5e8c4ce
+--- /dev/null
++++ b/services/ui/display/display_layout_manager.h
+@@ -0,0 +1,50 @@
++// Copyright 2015 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_LAYOUT_MANAGER_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_LAYOUT_MANAGER_H_
++
++#include <vector>
++
++#include "services/ui/display/display_configurator.h"
++#include "ui/display/types/display_constants.h"
++
++namespace display {
++
++struct DisplayConfigureRequest;
++class DisplaySnapshot;
++
++class DisplayLayoutManager {
++ public:
++  virtual ~DisplayLayoutManager() {}
++
++  virtual DisplayConfigurator::SoftwareMirroringController*
++  GetSoftwareMirroringController() const = 0;
++
++  virtual DisplayConfigurator::StateController* GetStateController() const = 0;
++
++  // Returns the current display state.
++  virtual MultipleDisplayState GetDisplayState() const = 0;
++
++  // Returns the current power state.
++  virtual chromeos::DisplayPowerState GetPowerState() const = 0;
++
++  // Based on the given |displays|, display state and power state, it will
++  // create display configuration requests which will then be used to
++  // configure the hardware. The requested configuration is stored in
++  // |requests| and |framebuffer_size|.
++  virtual bool GetDisplayLayout(const std::vector<DisplaySnapshot*>& displays,
++                                MultipleDisplayState new_display_state,
++                                chromeos::DisplayPowerState new_power_state,
++                                std::vector<DisplayConfigureRequest>* requests,
++                                gfx::Size* framebuffer_size) const = 0;
++
++  virtual std::vector<DisplaySnapshot*> GetDisplayStates() const = 0;
++
++  virtual bool IsMirroring() const = 0;
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_LAYOUT_MANAGER_H_
+diff --git a/services/ui/display/display_snapshot_virtual.cc b/services/ui/display/display_snapshot_virtual.cc
+new file mode 100644
+index 0000000..63f36f4
+--- /dev/null
++++ b/services/ui/display/display_snapshot_virtual.cc
+@@ -0,0 +1,53 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "display_snapshot_virtual.h"
++
++#include <inttypes.h>
++
++#include "base/strings/stringprintf.h"
++#include "ui/display/types/display_mode.h"
++
++namespace display {
++
++namespace {
++
++// For a non hi-DPI display (96 dpi) use a pitch of 265µm.
++static const float kVirtualDisplayPitchMM = 0.265;
++
++}  // namespace
++
++DisplaySnapshotVirtual::DisplaySnapshotVirtual(int64_t display_id,
++                                               const gfx::Size& display_size)
++    : DisplaySnapshot(display_id,
++                      gfx::Point(0, 0),
++                      // Calculate physical size assuming 96dpi display.
++                      gfx::Size(display_size.width() * kVirtualDisplayPitchMM,
++                                display_size.height() * kVirtualDisplayPitchMM),
++                      DISPLAY_CONNECTION_TYPE_VIRTUAL,
++                      false,
++                      false,
++                      false,
++                      "Virtual display",
++                      base::FilePath(),
++                      std::vector<std::unique_ptr<const DisplayMode>>(),
++                      std::vector<uint8_t>(),  // Virtual displays have no EDID.
++                      nullptr,
++                      nullptr) {
++  mode_.reset(new DisplayMode(display_size, false, 30));
++  modes_.push_back(mode_->Clone());
++
++  native_mode_ = modes_.front().get();
++}
++
++DisplaySnapshotVirtual::~DisplaySnapshotVirtual() {}
++
++std::string DisplaySnapshotVirtual::ToString() const {
++  return base::StringPrintf(
++      "Virtual id=%" PRId64 " current_mode=%s physical_size=%s", display_id_,
++      current_mode_ ? current_mode_->ToString().c_str() : "nullptr",
++      physical_size_.ToString().c_str());
++}
++
++}  // namespace display
+diff --git a/services/ui/display/display_snapshot_virtual.h b/services/ui/display/display_snapshot_virtual.h
+new file mode 100644
+index 0000000..2a542fd
+--- /dev/null
++++ b/services/ui/display/display_snapshot_virtual.h
+@@ -0,0 +1,38 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_SNAPSHOT_VIRTUAL_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_SNAPSHOT_VIRTUAL_H_
++
++#include <stdint.h>
++
++#include <memory>
++
++#include "base/macros.h"
++#include "ui/display/manager/display_manager_export.h"
++#include "ui/display/types/display_mode.h"
++#include "ui/display/types/display_snapshot.h"
++
++namespace display {
++
++// This class represents a virtual display to be enabled on demand. The display
++// is constructed for the desired pixel resolution.
++class DISPLAY_MANAGER_EXPORT DisplaySnapshotVirtual : public DisplaySnapshot {
++ public:
++  // |display_id| is the numerical identifier for the virtual display,
++  // |display_size| is the pixel dimensions for the display.
++  DisplaySnapshotVirtual(int64_t display_id, const gfx::Size& display_size);
++  ~DisplaySnapshotVirtual() override;
++
++  // DisplaySnapshot overrides.
++  std::string ToString() const override;
++
++ private:
++  std::unique_ptr<DisplayMode> mode_;
++  DISALLOW_COPY_AND_ASSIGN(DisplaySnapshotVirtual);
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_SNAPSHOT_VIRTUAL_H_
+diff --git a/services/ui/display/display_util.cc b/services/ui/display/display_util.cc
+new file mode 100644
+index 0000000..231d16d
+--- /dev/null
++++ b/services/ui/display/display_util.cc
+@@ -0,0 +1,78 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "display_util.h"
++
++#include <stddef.h>
++
++#include "base/logging.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/stringprintf.h"
++#include "ui/display/types/display_snapshot.h"
++
++namespace display {
++
++std::string DisplayPowerStateToString(chromeos::DisplayPowerState state) {
++  switch (state) {
++    case chromeos::DISPLAY_POWER_ALL_ON:
++      return "ALL_ON";
++    case chromeos::DISPLAY_POWER_ALL_OFF:
++      return "ALL_OFF";
++    case chromeos::DISPLAY_POWER_INTERNAL_OFF_EXTERNAL_ON:
++      return "INTERNAL_OFF_EXTERNAL_ON";
++    case chromeos::DISPLAY_POWER_INTERNAL_ON_EXTERNAL_OFF:
++      return "INTERNAL_ON_EXTERNAL_OFF";
++    default:
++      return "unknown (" + base::IntToString(state) + ")";
++  }
++}
++
++std::string MultipleDisplayStateToString(MultipleDisplayState state) {
++  switch (state) {
++    case MULTIPLE_DISPLAY_STATE_INVALID:
++      return "INVALID";
++    case MULTIPLE_DISPLAY_STATE_HEADLESS:
++      return "HEADLESS";
++    case MULTIPLE_DISPLAY_STATE_SINGLE:
++      return "SINGLE";
++    case MULTIPLE_DISPLAY_STATE_DUAL_MIRROR:
++      return "DUAL_MIRROR";
++    case MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED:
++      return "DUAL_EXTENDED";
++    case MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED:
++      return "MULTI_EXTENDED";
++  }
++  NOTREACHED() << "Unknown state " << state;
++  return "INVALID";
++}
++
++int GetDisplayPower(const std::vector<DisplaySnapshot*>& displays,
++                    chromeos::DisplayPowerState state,
++                    std::vector<bool>* display_power) {
++  int num_on_displays = 0;
++  if (display_power)
++    display_power->resize(displays.size());
++
++  for (size_t i = 0; i < displays.size(); ++i) {
++    bool internal = displays[i]->type() == DISPLAY_CONNECTION_TYPE_INTERNAL;
++    bool on =
++        displays[i]->type() == DISPLAY_CONNECTION_TYPE_VIRTUAL ||
++        state == chromeos::DISPLAY_POWER_ALL_ON ||
++        (state == chromeos::DISPLAY_POWER_INTERNAL_OFF_EXTERNAL_ON &&
++         !internal) ||
++        (state == chromeos::DISPLAY_POWER_INTERNAL_ON_EXTERNAL_OFF && internal);
++    if (display_power)
++      (*display_power)[i] = on;
++    if (on)
++      num_on_displays++;
++  }
++  return num_on_displays;
++}
++
++bool IsPhysicalDisplayType(DisplayConnectionType type) {
++  return !(type &
++           (DISPLAY_CONNECTION_TYPE_NETWORK | DISPLAY_CONNECTION_TYPE_VIRTUAL));
++}
++
++}  // namespace display
+diff --git a/services/ui/display/display_util.h b/services/ui/display/display_util.h
+new file mode 100644
+index 0000000..3cf2e55
+--- /dev/null
++++ b/services/ui/display/display_util.h
+@@ -0,0 +1,40 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_UTIL_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_UTIL_H_
++
++#include <string>
++#include <vector>
++
++#include "services/ui/display/display_configurator.h"
++#include "ui/display/manager/display_manager_export.h"
++#include "ui/display/types/display_constants.h"
++
++namespace display {
++
++class DisplaySnapshot;
++
++// Returns a string describing |state|.
++std::string DisplayPowerStateToString(chromeos::DisplayPowerState state);
++
++// Returns a string describing |state|.
++std::string MultipleDisplayStateToString(MultipleDisplayState state);
++
++// Returns the number of displays in |displays| that should be turned on, per
++// |state|.  If |display_power| is non-NULL, it is updated to contain the
++// on/off state of each corresponding entry in |displays|.
++int DISPLAY_MANAGER_EXPORT
++GetDisplayPower(const std::vector<DisplaySnapshot*>& displays,
++                chromeos::DisplayPowerState state,
++                std::vector<bool>* display_power);
++
++// Returns whether the DisplayConnectionType |type| is a physically connected
++// display. Currently DISPLAY_CONNECTION_TYPE_VIRTUAL and
++// DISPLAY_CONNECTION_TYPE_NETWORK return false. All other types return true.
++bool IsPhysicalDisplayType(DisplayConnectionType type);
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_UTIL_H_
+diff --git a/services/ui/display/screen_manager_ozone_internal.cc b/services/ui/display/screen_manager_ozone_internal.cc
+index d175cee..d65ff53 100644
+--- a/services/ui/display/screen_manager_ozone_internal.cc
++++ b/services/ui/display/screen_manager_ozone_internal.cc
+@@ -5,6 +5,7 @@
+ #include "services/ui/display/screen_manager_ozone_internal.h"
+ 
+ #include <string>
++#include <iostream>
+ #include <utility>
+ 
+ #include "base/command_line.h"
+@@ -16,7 +17,6 @@
+ #include "services/ui/display/output_protection.h"
+ #include "third_party/skia/include/core/SkColor.h"
+ #include "ui/display/manager/chromeos/display_change_observer.h"
+-#include "ui/display/manager/chromeos/touch_transform_controller.h"
+ #include "ui/display/manager/display_layout_store.h"
+ #include "ui/display/manager/display_manager_utilities.h"
+ #include "ui/display/screen.h"
+@@ -26,7 +26,7 @@
+ #include "ui/display/types/native_display_delegate.h"
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/ozone/public/ozone_platform.h"
+-
++#include "base/debug/stack_trace.h"
+ namespace display {
+ namespace {
+ 
+@@ -74,7 +74,7 @@ ScreenManagerOzoneInternal::~ScreenManagerOzoneInternal() {
+   // cleans up the instance pointer though, which could cause problems in tests.
+   Screen::SetScreenInstance(nullptr);
+ 
+-  touch_transform_controller_.reset();
++ // touch_transform_controller_.reset();
+ 
+   if (display_manager_)
+     display_manager_->RemoveObserver(this);
+@@ -89,6 +89,7 @@ ScreenManagerOzoneInternal::~ScreenManagerOzoneInternal() {
+ }
+ 
+ void ScreenManagerOzoneInternal::SetPrimaryDisplayId(int64_t display_id) {
++  printf("ScreenManagerOzoneInternal:%s\n", __func__);
+   DCHECK_NE(kInvalidDisplayId, display_id);
+   if (primary_display_id_ == display_id)
+     return;
+@@ -153,6 +154,7 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+   DCHECK(delegate);
+   delegate_ = delegate;
+ 
++  printf("ScreenManagerOzoneInternal:%s\n", __func__);
+   // Tests may inject a NativeDisplayDelegate, otherwise get it from
+   // OzonePlatform.
+   if (!native_display_delegate_) {
+@@ -160,19 +162,14 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+         ui::OzonePlatform::GetInstance()->CreateNativeDisplayDelegate();
+   }
+ 
+-  // The FakeDisplayController gives us a way to make the NativeDisplayDelegate
+-  // pretend something display related has happened.
+-  if (!chromeos::IsRunningAsSystemCompositor()) {
+-    fake_display_controller_ =
+-        native_display_delegate_->GetFakeDisplayController();
+-  }
+-
+   // Configure display manager. ScreenManager acts as an observer to find out
+   // display changes and as a delegate to find out when changes start/stop.
+   display_manager_ = base::MakeUnique<DisplayManager>(std::move(screen_owned_));
++  display_manager_->InitFromCommandLine();
+   display_manager_->set_configure_displays(true);
+   display_manager_->AddObserver(this);
+   display_manager_->set_delegate(this);
++  display_manager_->InitDefaultDisplay();
+ 
+   // DisplayChangeObserver observes DisplayConfigurator and sends updates to
+   // DisplayManager.
+@@ -184,14 +181,11 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+   display_configurator_.set_configure_display(true);
+   display_configurator_.AddObserver(display_change_observer_.get());
+   display_configurator_.set_state_controller(display_change_observer_.get());
+-  display_configurator_.set_mirroring_controller(display_manager_.get());
++ // display_configurator_.set_mirroring_controller(display_manager_.get());
+ 
+   // Perform initial configuration.
+   display_configurator_.Init(std::move(native_display_delegate_), false);
+   display_configurator_.ForceInitialConfigure(kChromeOsBootColor);
+-
+-  touch_transform_controller_ = base::MakeUnique<TouchTransformController>(
+-      &display_configurator_, display_manager_.get());
+ }
+ 
+ void ScreenManagerOzoneInternal::RequestCloseDisplay(int64_t display_id) {
+@@ -270,7 +264,6 @@ void ScreenManagerOzoneInternal::SwapPrimaryDisplay() {
+   // more displays.
+   if (display_manager_->GetNumDisplays() != 2)
+     return;
+-
+   DVLOG(1) << "SwapPrimaryDisplay()";
+ 
+   DisplayIdList display_ids = display_manager_->GetCurrentDisplayIdList();
+@@ -305,7 +298,7 @@ void ScreenManagerOzoneInternal::RelinquishDisplayControl(
+ 
+ void ScreenManagerOzoneInternal::OnDisplayAdded(const Display& display) {
+   ViewportMetrics metrics = GetViewportMetricsForDisplay(display);
+-  DVLOG(1) << "OnDisplayAdded: " << display.ToString() << "\n  "
++  std::cout << "OnDisplayAdded: " << display.ToString() << "\n  "
+            << metrics.ToString();
+   screen_->display_list().AddDisplay(display, DisplayList::Type::NOT_PRIMARY);
+   delegate_->OnDisplayAdded(display.id(), metrics);
+@@ -376,7 +369,7 @@ void ScreenManagerOzoneInternal::PostDisplayConfigurationChange(
+     }
+   }
+ 
+-  touch_transform_controller_->UpdateTouchTransforms();
++  //touch_transform_controller_->UpdateTouchTransforms();
+ 
+   DVLOG(1) << "PostDisplayConfigurationChange";
+ }
+diff --git a/services/ui/display/screen_manager_ozone_internal.h b/services/ui/display/screen_manager_ozone_internal.h
+index bb9abff..a70acb1 100644
+--- a/services/ui/display/screen_manager_ozone_internal.h
++++ b/services/ui/display/screen_manager_ozone_internal.h
+@@ -20,16 +20,15 @@
+ #include "services/ui/public/interfaces/display/test_display_controller.mojom.h"
+ #include "ui/display/display.h"
+ #include "ui/display/display_observer.h"
+-#include "ui/display/manager/chromeos/display_configurator.h"
++#include "services/ui/display/display_configurator.h"
+ #include "ui/display/manager/display_manager.h"
+ #include "ui/display/types/display_constants.h"
+ 
+ namespace display {
+-
+ class DisplayChangeObserver;
+ class FakeDisplayController;
+ class ScreenBase;
+-class TouchTransformController;
++//class TouchTransformController;
+ 
+ // ScreenManagerOzoneInternal provides the necessary functionality to configure
+ // all attached physical displays on the the ozone platform when operating in
+@@ -89,7 +88,7 @@ class ScreenManagerOzoneInternal
+   void CloseMirroringDisplayIfNotNecessary() override;
+   void PreDisplayConfigurationChange(bool clear_focus) override;
+   void PostDisplayConfigurationChange(bool must_clear_window) override;
+-  DisplayConfigurator* display_configurator() override;
++  DisplayConfigurator* display_configurator();
+ 
+   // mojo::InterfaceFactory<mojom::DisplayController>:
+   void Create(const service_manager::Identity& remote_identity,
+@@ -106,7 +105,7 @@ class ScreenManagerOzoneInternal
+   DisplayConfigurator display_configurator_;
+   std::unique_ptr<DisplayManager> display_manager_;
+   std::unique_ptr<DisplayChangeObserver> display_change_observer_;
+-  std::unique_ptr<TouchTransformController> touch_transform_controller_;
++//  std::unique_ptr<TouchTransformController> touch_transform_controller_;
+ 
+   // A Screen instance is created in the constructor because it might be
+   // accessed early. The ownership of this object will be transfered to
+diff --git a/services/ui/display/update_display_configuration_task.cc b/services/ui/display/update_display_configuration_task.cc
+new file mode 100644
+index 0000000..998db3e
+--- /dev/null
++++ b/services/ui/display/update_display_configuration_task.cc
+@@ -0,0 +1,225 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++
++#include "services/ui/display/update_display_configuration_task.h"
++
++#include "services/ui/display/configure_displays_task.h"
++#include "services/ui/display/display_layout_manager.h"
++#include "services/ui/display/display_util.h"
++
++#include "ui/display/types/display_snapshot.h"
++#include "ui/display/types/native_display_delegate.h"
++
++namespace display {
++
++UpdateDisplayConfigurationTask::UpdateDisplayConfigurationTask(
++    NativeDisplayDelegate* delegate,
++    DisplayLayoutManager* layout_manager,
++    MultipleDisplayState new_display_state,
++    chromeos::DisplayPowerState new_power_state,
++    int power_flags,
++    uint32_t background_color_argb,
++    bool force_configure,
++    const ResponseCallback& callback)
++    : delegate_(delegate),
++      layout_manager_(layout_manager),
++      new_display_state_(new_display_state),
++      new_power_state_(new_power_state),
++      power_flags_(power_flags),
++      background_color_argb_(background_color_argb),
++      force_configure_(force_configure),
++      callback_(callback),
++      force_dpms_(false),
++      weak_ptr_factory_(this) {
++  delegate_->GrabServer();
++}
++
++UpdateDisplayConfigurationTask::~UpdateDisplayConfigurationTask() {
++  delegate_->UngrabServer();
++}
++
++void UpdateDisplayConfigurationTask::Run() {
++  delegate_->GetDisplays(
++      base::Bind(&UpdateDisplayConfigurationTask::OnDisplaysUpdated,
++                 weak_ptr_factory_.GetWeakPtr()));
++}
++
++void UpdateDisplayConfigurationTask::SetVirtualDisplaySnapshots(
++    const std::vector<std::unique_ptr<DisplaySnapshot>>& snapshots) {
++  virtual_display_snapshots_.resize(snapshots.size());
++  std::transform(
++      snapshots.cbegin(), snapshots.cend(), virtual_display_snapshots_.begin(),
++      [](const std::unique_ptr<DisplaySnapshot>& item) { return item.get(); });
++}
++
++void UpdateDisplayConfigurationTask::OnDisplaysUpdated(
++    const std::vector<DisplaySnapshot*>& displays) {
++  cached_displays_ = displays;
++
++  // Add virtual displays after retrieving the physical displays from the NDD.
++  cached_displays_.insert(cached_displays_.end(),
++                          virtual_display_snapshots_.begin(),
++                          virtual_display_snapshots_.end());
++
++  if (cached_displays_.size() > 1 && background_color_argb_)
++    delegate_->SetBackgroundColor(background_color_argb_);
++
++  // If the user hasn't requested a display state, update it using the requested
++  // power state.
++  if (new_display_state_ == MULTIPLE_DISPLAY_STATE_INVALID)
++    new_display_state_ = ChooseDisplayState();
++
++  VLOG(1) << "OnDisplaysUpdated: new_display_state="
++          << MultipleDisplayStateToString(new_display_state_)
++          << " new_power_state=" << DisplayPowerStateToString(new_power_state_)
++          << " flags=" << power_flags_
++          << " force_configure=" << force_configure_
++          << " display_count=" << cached_displays_.size();
++  // If there has been any change in the requested power state and the displays
++  // aren't being turned off force a change in DPMS state.
++  force_dpms_ = ShouldForceDpms() && ShouldConfigure();
++
++  if (ShouldConfigure()) {
++    EnterState(base::Bind(&UpdateDisplayConfigurationTask::OnStateEntered,
++                          weak_ptr_factory_.GetWeakPtr()));
++  } else {
++    // If we don't have to configure then we're sticking with the old
++    // configuration. Update it such that it reflects in the reported value.
++    new_power_state_ = layout_manager_->GetPowerState();
++    FinishConfiguration(true);
++  }
++}
++
++void UpdateDisplayConfigurationTask::EnterState(
++    const ConfigureDisplaysTask::ResponseCallback& callback) {
++  VLOG(2) << "EnterState";
++  std::vector<DisplayConfigureRequest> requests;
++  if (!layout_manager_->GetDisplayLayout(cached_displays_, new_display_state_,
++                                         new_power_state_, &requests,
++                                         &framebuffer_size_)) {
++    callback.Run(ConfigureDisplaysTask::ERROR);
++    return;
++  }
++  if (!requests.empty()) {
++    DCHECK(!framebuffer_size_.IsEmpty());
++    delegate_->CreateFrameBuffer(framebuffer_size_);
++    configure_task_.reset(
++        new ConfigureDisplaysTask(delegate_, requests, callback));
++    configure_task_->Run();
++  } else {
++    VLOG(2) << "No displays";
++    callback.Run(ConfigureDisplaysTask::SUCCESS);
++  }
++}
++
++void UpdateDisplayConfigurationTask::OnStateEntered(
++    ConfigureDisplaysTask::Status status) {
++  bool success = status != ConfigureDisplaysTask::ERROR;
++  if (new_display_state_ == MULTIPLE_DISPLAY_STATE_DUAL_MIRROR &&
++      status == ConfigureDisplaysTask::PARTIAL_SUCCESS)
++    success = false;
++
++  if (layout_manager_->GetSoftwareMirroringController()) {
++    bool enable_software_mirroring = false;
++    if (!success && new_display_state_ == MULTIPLE_DISPLAY_STATE_DUAL_MIRROR) {
++      if (layout_manager_->GetDisplayState() !=
++              MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED ||
++          layout_manager_->GetPowerState() != new_power_state_ ||
++          force_configure_) {
++        new_display_state_ = MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED;
++        EnterState(base::Bind(
++            &UpdateDisplayConfigurationTask::OnEnableSoftwareMirroring,
++            weak_ptr_factory_.GetWeakPtr()));
++        return;
++      }
++
++      success = layout_manager_->GetDisplayState() ==
++                MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED;
++      enable_software_mirroring = success;
++      if (success)
++        new_display_state_ = MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED;
++    }
++
++    layout_manager_->GetSoftwareMirroringController()->SetSoftwareMirroring(
++        enable_software_mirroring);
++  }
++
++  FinishConfiguration(success);
++}
++
++void UpdateDisplayConfigurationTask::OnEnableSoftwareMirroring(
++    ConfigureDisplaysTask::Status status) {
++  bool success = status != ConfigureDisplaysTask::ERROR;
++  layout_manager_->GetSoftwareMirroringController()->SetSoftwareMirroring(
++      success);
++  FinishConfiguration(success);
++}
++
++void UpdateDisplayConfigurationTask::FinishConfiguration(bool success) {
++  if (success && force_dpms_)
++    delegate_->ForceDPMSOn();
++
++  callback_.Run(success, cached_displays_, framebuffer_size_,
++                new_display_state_, new_power_state_);
++}
++
++bool UpdateDisplayConfigurationTask::ShouldForceDpms() const {
++  return new_power_state_ != chromeos::DISPLAY_POWER_ALL_OFF &&
++         (layout_manager_->GetPowerState() != new_power_state_ ||
++          (power_flags_ & DisplayConfigurator::kSetDisplayPowerForceProbe));
++}
++
++bool UpdateDisplayConfigurationTask::ShouldConfigure() const {
++  if (force_configure_)
++    return true;
++
++  if (cached_displays_.size() == 1 &&
++      cached_displays_[0]->type() == DISPLAY_CONNECTION_TYPE_INTERNAL)
++    return true;
++
++  if (!(power_flags_ &
++        DisplayConfigurator::kSetDisplayPowerOnlyIfSingleInternalDisplay))
++    return true;
++
++  if (new_display_state_ != layout_manager_->GetDisplayState())
++    return true;
++
++  return false;
++}
++
++MultipleDisplayState UpdateDisplayConfigurationTask::ChooseDisplayState()
++    const {
++  int num_displays = cached_displays_.size();
++  int num_on_displays =
++      GetDisplayPower(cached_displays_, new_power_state_, nullptr);
++
++  if (num_displays == 0)
++    return MULTIPLE_DISPLAY_STATE_HEADLESS;
++
++  if (num_displays == 1 || num_on_displays == 1) {
++    // If only one display is currently turned on, return the "single" state
++    // so that its native mode will be used.
++    return MULTIPLE_DISPLAY_STATE_SINGLE;
++  }
++
++  if (num_displays == 2 || num_on_displays == 2) {
++    // Try to use the saved configuration; otherwise, default to extended.
++    DisplayConfigurator::StateController* state_controller =
++        layout_manager_->GetStateController();
++
++    if (!state_controller)
++      return MULTIPLE_DISPLAY_STATE_DUAL_EXTENDED;
++    return state_controller->GetStateForDisplayIds(cached_displays_);
++  }
++
++  if (num_displays >= 3) {
++    // 3+ displays are always extended
++    return MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED;
++  }
++
++  return MULTIPLE_DISPLAY_STATE_INVALID;
++}
++
++}  // namespace display
+diff --git a/services/ui/display/update_display_configuration_task.h b/services/ui/display/update_display_configuration_task.h
+new file mode 100644
+index 0000000..90216b7
+--- /dev/null
++++ b/services/ui/display/update_display_configuration_task.h
+@@ -0,0 +1,119 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef UI_DISPLAY_MANAGER_CHROMEOS_UPDATE_DISPLAY_CONFIGURATION_TASK_H_
++#define UI_DISPLAY_MANAGER_CHROMEOS_UPDATE_DISPLAY_CONFIGURATION_TASK_H_
++
++#include <stdint.h>
++
++#include <memory>
++#include <vector>
++
++#include "base/macros.h"
++#include "base/memory/weak_ptr.h"
++#include "services/ui/display/configure_displays_task.h"
++#include "services/ui/display/display_configurator.h"
++
++namespace display {
++
++class DisplaySnapshot;
++class NativeDisplayDelegate;
++
++class DISPLAY_MANAGER_EXPORT UpdateDisplayConfigurationTask {
++ public:
++  typedef base::Callback<void(
++      bool /* success */,
++      const std::vector<DisplaySnapshot*>& /* displays */,
++      const gfx::Size& /* framebuffer_size */,
++      MultipleDisplayState /* new_display_state */,
++      chromeos::DisplayPowerState /* new_power_state */)>
++      ResponseCallback;
++
++  UpdateDisplayConfigurationTask(NativeDisplayDelegate* delegate,
++                                 DisplayLayoutManager* layout_manager,
++                                 MultipleDisplayState new_display_state,
++                                 chromeos::DisplayPowerState new_power_state,
++                                 int power_flags,
++                                 uint32_t background_color_argb,
++                                 bool force_configure,
++                                 const ResponseCallback& callback);
++  ~UpdateDisplayConfigurationTask();
++
++  // The pointers to the DisplaySnapshots in this vector are owned by
++  // DisplayConfigurator.
++  void SetVirtualDisplaySnapshots(
++      const std::vector<std::unique_ptr<DisplaySnapshot>>& snapshots);
++
++  void Run();
++
++ private:
++  // Callback to NativeDisplayDelegate::GetDisplays().
++  void OnDisplaysUpdated(const std::vector<DisplaySnapshot*>& displays);
++
++  // Callback to ConfigureDisplaysTask used to process the result of a display
++  // configuration run.
++  void OnStateEntered(ConfigureDisplaysTask::Status status);
++
++  // If the initial display configuration run failed due to errors entering
++  // mirror more, another configuration run is executed to enter software
++  // mirroring. This is the callback used to process the result of that
++  // configuration.
++  void OnEnableSoftwareMirroring(ConfigureDisplaysTask::Status status);
++
++  // Starts the configuration process. |callback| is used to continue the task
++  // after |configure_taks_| finishes executing.
++  void EnterState(const ConfigureDisplaysTask::ResponseCallback& callback);
++
++  // Finishes display configuration and runs |callback_|.
++  void FinishConfiguration(bool success);
++
++  // Returns true if the DPMS state should be force to on.
++  bool ShouldForceDpms() const;
++
++  // Returns true if a display configuration is required.
++  bool ShouldConfigure() const;
++
++  // Returns a display state based on the power state.
++  MultipleDisplayState ChooseDisplayState() const;
++
++  NativeDisplayDelegate* delegate_;       // Not owned.
++  DisplayLayoutManager* layout_manager_;  // Not owned.
++
++  // Requested display state.
++  MultipleDisplayState new_display_state_;
++
++  // Requested power state.
++  chromeos::DisplayPowerState new_power_state_;
++
++  // Bitwise-or-ed values for the kSetDisplayPower* values defined in
++  // DisplayConfigurator.
++  int power_flags_;
++
++  uint32_t background_color_argb_;
++
++  bool force_configure_;
++
++  // Used to signal that the task has finished.
++  ResponseCallback callback_;
++
++  bool force_dpms_;
++
++  // List of updated displays.
++  std::vector<DisplaySnapshot*> cached_displays_;
++
++  // Vector of unowned VirtualDisplaySnapshots to be added when doing the task.
++  std::vector<DisplaySnapshot*> virtual_display_snapshots_;
++
++  gfx::Size framebuffer_size_;
++
++  std::unique_ptr<ConfigureDisplaysTask> configure_task_;
++
++  base::WeakPtrFactory<UpdateDisplayConfigurationTask> weak_ptr_factory_;
++
++  DISALLOW_COPY_AND_ASSIGN(UpdateDisplayConfigurationTask);
++};
++
++}  // namespace display
++
++#endif  // UI_DISPLAY_MANAGER_CHROMEOS_UPDATE_DISPLAY_CONFIGURATION_TASK_H_
+-- 
+2.7.4
+
