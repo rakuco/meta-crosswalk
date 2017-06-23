@@ -253,7 +253,7 @@ do_configure() {
 }
 
 do_compile() {
-    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox ozone_demo gbm_unittests mash:all
+    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox ozone_demo gbm_unittests mash:all mus_demo
 }
 
 do_install() {
@@ -293,6 +293,7 @@ do_install() {
 	install -m 4755 chrome_sandbox ${D}${libdir}/chromium/chrome-sandbox
 	install -m 0755 chrome ${D}${libdir}/chromium/chromium-bin
 	install -m 0755 ozone_demo ${D}${libdir}/chromium
+	install -m 0755 mus_demo ${D}${libdir}/chromium
 	install -m 0755 mash ${D}${libdir}/chromium
 	install -m 0755 *.service ${D}${libdir}/chromium
 	install -m 0644 *.json ${D}${libdir}/chromium
