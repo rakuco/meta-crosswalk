@@ -108,15 +108,20 @@ If the board does not boot automactically, you can boot it manually from the EFI
 Shell> fs0:
 Shell> bootx64
 ```
+You can test ozone-gbm by running ozone-demo or mus_demo:
+```
+$ /usr/lib/chromium/ozone-demo
+$ /usr/lib/chromium/mash --service=mus_demo
+```
 Run chromium
 ```
-$ /usr/lib/chromium/content_shell --no-sandbox --ozone-platform=gbm --mash
-$ chromium --no-sandbox --ozone-platform=gbm --mash
+$ /usr/lib/chrome --mash --no-sandbox --window-manager=simple_wm
 ```
-You can test ozone-gbm by running ozone-demo:
+Run mash session
 ```
-$/usr/lib/chromium/ozone-demo
+$ ./mash --service=mash_session  --no-sandbox --window-manager=simple_wm
 ```
+
 
 ## Build Chromium external source
 The current Yocto recipe only works with the stable release of Chromium so there might be many build issues with ToT, but you can try it out.
