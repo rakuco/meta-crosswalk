@@ -1,7 +1,7 @@
-From 783ad41199b6f640c7bedab51ae2004ff211ff1d Mon Sep 17 00:00:00 2001
+From b0cb1823fa18fe3ff9570211878646bee5b2239b Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Tue, 20 Jun 2017 17:45:41 -0700
-Subject: [PATCH 4/5] Fix the display size problem
+Subject: [PATCH 4/7] Fix the display size problem
 
 ---
  services/ui/ws/platform_display_default.cc | 2 +-

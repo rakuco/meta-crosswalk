@@ -1,7 +1,7 @@
-From 5c8210567791dd356a251c45bd978c5b4db3906e Mon Sep 17 00:00:00 2001
+From 2df6c619b1dd6feddf6032a4a1df16551b55e677 Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Fri, 16 Jun 2017 23:44:32 -0700
-Subject: [PATCH 1/5] Add CrOS source files
+Subject: [PATCH 1/7] Add CrOS source files for display management
 
 ---
  services/ui/demo/BUILD.gn                          |    1 +
@@ -17,11 +17,11 @@ Subject: [PATCH 1/5] Add CrOS source files
  services/ui/display/display_snapshot_virtual.h     |   38 +
  services/ui/display/display_util.cc                |   78 ++
  services/ui/display/display_util.h                 |   40 +
- .../ui/display/screen_manager_ozone_internal.cc    |   27 +-
+ .../ui/display/screen_manager_ozone_internal.cc    |   26 +-
  .../ui/display/screen_manager_ozone_internal.h     |    9 +-
  .../display/update_display_configuration_task.cc   |  225 ++++
  .../ui/display/update_display_configuration_task.h |  119 ++
- 17 files changed, 2870 insertions(+), 30 deletions(-)
+ 17 files changed, 2869 insertions(+), 30 deletions(-)
  create mode 100644 services/ui/display/configure_displays_task.cc
  create mode 100644 services/ui/display/configure_displays_task.h
  create mode 100644 services/ui/display/display_change_observer.cc
@@ -2658,7 +2658,7 @@ index 0000000..3cf2e55
 +
 +#endif  // UI_DISPLAY_MANAGER_CHROMEOS_DISPLAY_UTIL_H_
 diff --git a/services/ui/display/screen_manager_ozone_internal.cc b/services/ui/display/screen_manager_ozone_internal.cc
-index d175cee..d65ff53 100644
+index d175cee..16a90c8 100644
 --- a/services/ui/display/screen_manager_ozone_internal.cc
 +++ b/services/ui/display/screen_manager_ozone_internal.cc
 @@ -5,6 +5,7 @@
@@ -2695,15 +2695,7 @@ index d175cee..d65ff53 100644
  
    if (display_manager_)
      display_manager_->RemoveObserver(this);
-@@ -89,6 +89,7 @@ ScreenManagerOzoneInternal::~ScreenManagerOzoneInternal() {
- }
- 
- void ScreenManagerOzoneInternal::SetPrimaryDisplayId(int64_t display_id) {
-+  printf("ScreenManagerOzoneInternal:%s\n", __func__);
-   DCHECK_NE(kInvalidDisplayId, display_id);
-   if (primary_display_id_ == display_id)
-     return;
-@@ -153,6 +154,7 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+@@ -153,6 +153,7 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
    DCHECK(delegate);
    delegate_ = delegate;
  
@@ -2711,7 +2703,7 @@ index d175cee..d65ff53 100644
    // Tests may inject a NativeDisplayDelegate, otherwise get it from
    // OzonePlatform.
    if (!native_display_delegate_) {
-@@ -160,19 +162,14 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+@@ -160,19 +161,14 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
          ui::OzonePlatform::GetInstance()->CreateNativeDisplayDelegate();
    }
  
@@ -2733,7 +2725,7 @@ index d175cee..d65ff53 100644
  
    // DisplayChangeObserver observes DisplayConfigurator and sends updates to
    // DisplayManager.
-@@ -184,14 +181,11 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+@@ -184,14 +180,11 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
    display_configurator_.set_configure_display(true);
    display_configurator_.AddObserver(display_change_observer_.get());
    display_configurator_.set_state_controller(display_change_observer_.get());
@@ -2749,7 +2741,7 @@ index d175cee..d65ff53 100644
  }
  
  void ScreenManagerOzoneInternal::RequestCloseDisplay(int64_t display_id) {
-@@ -270,7 +264,6 @@ void ScreenManagerOzoneInternal::SwapPrimaryDisplay() {
+@@ -270,7 +263,6 @@ void ScreenManagerOzoneInternal::SwapPrimaryDisplay() {
    // more displays.
    if (display_manager_->GetNumDisplays() != 2)
      return;
@@ -2757,7 +2749,7 @@ index d175cee..d65ff53 100644
    DVLOG(1) << "SwapPrimaryDisplay()";
  
    DisplayIdList display_ids = display_manager_->GetCurrentDisplayIdList();
-@@ -305,7 +298,7 @@ void ScreenManagerOzoneInternal::RelinquishDisplayControl(
+@@ -305,7 +297,7 @@ void ScreenManagerOzoneInternal::RelinquishDisplayControl(
  
  void ScreenManagerOzoneInternal::OnDisplayAdded(const Display& display) {
    ViewportMetrics metrics = GetViewportMetricsForDisplay(display);
@@ -2766,7 +2758,7 @@ index d175cee..d65ff53 100644
             << metrics.ToString();
    screen_->display_list().AddDisplay(display, DisplayList::Type::NOT_PRIMARY);
    delegate_->OnDisplayAdded(display.id(), metrics);
-@@ -376,7 +369,7 @@ void ScreenManagerOzoneInternal::PostDisplayConfigurationChange(
+@@ -376,7 +368,7 @@ void ScreenManagerOzoneInternal::PostDisplayConfigurationChange(
      }
    }
  
