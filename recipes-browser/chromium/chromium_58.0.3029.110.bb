@@ -17,6 +17,8 @@ SRC_URI += " \
         file://0003-Make-mus_demo-work.patch \
         file://0004-Fix-the-display-size-problem.patch \
         file://0005-Make-it-Work-like-CrOS.patch \
+        file://0006-Add-support-for-ash-host-window-bounds.patch \
+        file://0007-Set-the-default-host-window-size.patch \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
