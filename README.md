@@ -122,7 +122,7 @@ Run mash session
 ```
 $ /usr/lib/chromium/mash https://webglsamples.org/aquarium/aquarium.html --service=mash_session --no-sandbox --window-manager=simple_wm --ash-host-window-bounds=2160x1440
 ```
-If your display resolution is 1920x1040, you don't need to pass --ash-host-window-bounds parameter.
+If your display resolution is 1920x1080, you don't need to pass --ash-host-window-bounds parameter.
 
 ## Build Chromium external source
 The current Yocto recipe only works with the stable release of Chromium so there might be many build issues with ToT, but you can try it out.
