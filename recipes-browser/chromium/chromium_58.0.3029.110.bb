@@ -294,7 +294,7 @@ do_install() {
 	ln -s ${libdir}/chromium/chromium-wrapper ${D}${bindir}/chromium
 
 	install -m 4755 chrome_sandbox ${D}${libdir}/chromium/chrome-sandbox
-	install -m 0755 chrome ${D}${libdir}/chromium/chromium-bin
+	install -m 0755 chrome ${D}${libdir}/chromium
 	install -m 0755 ozone_demo ${D}${libdir}/chromium
 	install -m 0755 mash ${D}${libdir}/chromium
 	install -m 0755 *.service ${D}${libdir}/chromium
