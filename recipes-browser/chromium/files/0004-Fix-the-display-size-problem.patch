@@ -4,23 +4,9 @@ Date: Tue, 20 Jun 2017 17:45:41 -0700
 Subject: [PATCH 4/7] Fix the display size problem
 
 ---
- services/ui/ws/platform_display_default.cc | 2 +-
  ui/display/manager/managed_display_info.cc | 8 ++++----
- 2 files changed, 5 insertions(+), 5 deletions(-)
+ 1 files changed, 4 insertions(+), 4 deletions(-)
 
-diff --git a/services/ui/ws/platform_display_default.cc b/services/ui/ws/platform_display_default.cc
-index 6d32827..fedb06c 100644
---- a/services/ui/ws/platform_display_default.cc
-+++ b/services/ui/ws/platform_display_default.cc
-@@ -69,7 +69,7 @@ void PlatformDisplayDefault::Init(PlatformDisplayDelegate* delegate) {
-   platform_window_->SetBounds(bounds);
- #elif defined(USE_OZONE)
-   platform_window_ =
--      ui::OzonePlatform::GetInstance()->CreatePlatformWindow(this, bounds);
-+      ui::OzonePlatform::GetInstance()->CreatePlatformWindow(this, gfx::Rect(2160, 1440));
- #else
-   NOTREACHED() << "Unsupported platform";
- #endif
 diff --git a/ui/display/manager/managed_display_info.cc b/ui/display/manager/managed_display_info.cc
 index bf3d276..78d2aa4 100644
 --- a/ui/display/manager/managed_display_info.cc
