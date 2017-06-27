@@ -115,7 +115,7 @@ $ /usr/lib/chromium/mash --service=mus_demo
 ```
 Run chromium
 ```
-$ chromium https://webglsamples.org/aquarium/aquarium.html --mash --no-sandbox --window-manager=simple_wm --ash-host-window-bounds=2160x1440
+$ /usr/lib/chromium/chrome https://webglsamples.org/aquarium/aquarium.html --mash --no-sandbox --window-manager=simple_wm --ash-host-window-bounds=2160x1440
 
 ```
 Run mash session
