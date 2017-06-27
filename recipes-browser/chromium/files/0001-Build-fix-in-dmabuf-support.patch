@@ -1,0 +1,25 @@
+From 1f5395ebb514b6f206c566128db1347709c4f8a9 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Thu, 22 Jun 2017 17:25:07 -0700
+Subject: [PATCH 1/9] Build fix in dmabuf support
+
+---
+ ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.cc b/ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.cc
+index faee338..a6a2408 100644
+--- a/ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.cc
++++ b/ui/ozone/platform/drm/common/client_native_pixmap_dmabuf.cc
+@@ -16,7 +16,7 @@
+ #include "base/strings/stringprintf.h"
+ #include "base/trace_event/trace_event.h"
+ 
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
++#if true
+ #include <linux/types.h>
+ 
+ struct local_dma_buf_sync {
+-- 
+2.7.4
+

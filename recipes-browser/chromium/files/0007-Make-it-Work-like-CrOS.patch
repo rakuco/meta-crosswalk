@@ -1,0 +1,56 @@
+From 68040b5398c743cc26f835455902a01c94f2a1c6 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Tue, 20 Jun 2017 17:47:42 -0700
+Subject: [PATCH 7/9] Make it Work like CrOS
+
+---
+ ui/display/manager/display_manager.cc | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/ui/display/manager/display_manager.cc b/ui/display/manager/display_manager.cc
+index 68b7abf..7d555d2 100644
+--- a/ui/display/manager/display_manager.cc
++++ b/ui/display/manager/display_manager.cc
+@@ -141,6 +141,11 @@ DisplayManager::DisplayManager(std::unique_ptr<Screen> screen)
+   change_display_upon_host_resize_ = !configure_displays_;
+   unified_desktop_enabled_ = base::CommandLine::ForCurrentProcess()->HasSwitch(
+       ::switches::kEnableUnifiedDesktop);
++#else
++  // ozone-gbm without CrOS
++  configure_displays_ = true;
++  change_display_upon_host_resize_ = false;
++  unified_desktop_enabled_ = true;
+ #endif
+ }
+ 
+@@ -611,7 +616,6 @@ void DisplayManager::OnNativeDisplaysChanged(
+     }
+   }
+ 
+-#if defined(OS_CHROMEOS)
+   if (!configure_displays_ && new_display_info_list.size() > 1) {
+     DisplayIdList list = GenerateDisplayIdList(
+         new_display_info_list.begin(), new_display_info_list.end(),
+@@ -624,7 +628,6 @@ void DisplayManager::OnNativeDisplaysChanged(
+     if (layout.mirrored)
+       SetMultiDisplayMode(MIRRORING);
+   }
+-#endif
+ 
+   UpdateDisplaysWith(new_display_info_list);
+ }
+@@ -834,10 +837,7 @@ void DisplayManager::UpdateDisplaysWith(
+   }
+ 
+   bool must_clear_window = false;
+-#if defined(USE_X11) && defined(OS_CHROMEOS)
+-  must_clear_window =
+-      !display_changes.empty() && base::SysInfo::IsRunningOnChromeOS();
+-#endif
++  must_clear_window = !display_changes.empty();
+ 
+   if (delegate_)
+     delegate_->PostDisplayConfigurationChange(must_clear_window);
+-- 
+2.7.4
+

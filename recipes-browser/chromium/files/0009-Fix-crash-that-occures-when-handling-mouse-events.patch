@@ -1,0 +1,26 @@
+From 3ddea2f5f18d3bf515bd2d3fb2fcbfb48f109af6 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Mon, 26 Jun 2017 12:29:47 -0700
+Subject: [PATCH 9/9] Fix crash that occures when handling mouse events
+
+---
+ ui/aura/mus/capture_synchronizer.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/ui/aura/mus/capture_synchronizer.cc b/ui/aura/mus/capture_synchronizer.cc
+index 48b74f9..c2aeea58 100644
+--- a/ui/aura/mus/capture_synchronizer.cc
++++ b/ui/aura/mus/capture_synchronizer.cc
+@@ -34,7 +34,8 @@ void CaptureSynchronizer::SetCaptureFromServer(WindowMus* window) {
+       window ? client::GetCaptureClient(window->GetWindow()->GetRootWindow())
+              : client::GetCaptureClient(
+                    capture_window_->GetWindow()->GetRootWindow());
+-  capture_client->SetCapture(window ? window->GetWindow() : nullptr);
++  if (capture_client)
++    capture_client->SetCapture(window ? window->GetWindow() : nullptr);
+ }
+ 
+ void CaptureSynchronizer::AttachToCaptureClient(
+-- 
+2.7.4
+

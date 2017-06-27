@@ -1,0 +1,54 @@
+From d4a70590c3b4f51fe02f7777662107ff301aeb20 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Wed, 7 Jun 2017 15:07:44 -0700
+Subject: [PATCH 2/9] enable i915 driver
+
+---
+ third_party/libdrm/BUILD.gn  | 7 +++++++
+ third_party/minigbm/BUILD.gn | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
+index 7f040070..4b15a48 100644
+--- a/third_party/libdrm/BUILD.gn
++++ b/third_party/libdrm/BUILD.gn
+@@ -19,10 +19,12 @@ if (!use_system_libdrm) {
+       "src",
+       "src/include",
+       "src/include/drm",
++      "src/intel",
+     ]
+     if (is_clang) {
+       cflags = [ "-Wno-enum-conversion" ]
+     }
++    defines = [ "HAVE_LIBDRM_ATOMIC_PRIMITIVES" ]
+   }
+ 
+   static_library("libdrm") {
+@@ -31,6 +33,11 @@ if (!use_system_libdrm) {
+       "src/xf86drmHash.c",
+       "src/xf86drmMode.c",
+       "src/xf86drmRandom.c",
++      "src/intel/intel_bufmgr_fake.c",
++      "src/intel/intel_bufmgr_gem.c",
++      "src/intel/intel_bufmgr.c",
++      "src/intel/intel_decode.c",
++      "src/intel/mm.c",
+     ]
+ 
+     include_dirs = [
+diff --git a/third_party/minigbm/BUILD.gn b/third_party/minigbm/BUILD.gn
+index 806e12f..4027603 100644
+--- a/third_party/minigbm/BUILD.gn
++++ b/third_party/minigbm/BUILD.gn
+@@ -17,6 +17,7 @@ declare_args() {
+ if (!use_system_minigbm) {
+   config("minigbm_config") {
+     include_dirs = [ "src" ]
++    defines = ["DRV_I915"]
+   }
+ 
+   shared_library("minigbm") {
+-- 
+2.7.4
+

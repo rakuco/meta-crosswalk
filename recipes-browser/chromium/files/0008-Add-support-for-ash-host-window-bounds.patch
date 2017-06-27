@@ -1,0 +1,54 @@
+From b8553106a9752de216a3e72857630a01f069e34d Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Fri, 23 Jun 2017 18:26:01 -0700
+Subject: [PATCH 8/9] Add support for --ash-host-window-bounds
+
+This allows us to set the display size at runtime as follows:
+$ ./mash --service=mash_session  --no-sandbox --window-manager=simple_wm --ash-host-window-bounds=2160x1440
+---
+ services/ui/display/screen_manager_ozone_internal.cc |  1 -
+ ui/display/manager/display_manager.cc                | 16 ++++++++++++++--
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/services/ui/display/screen_manager_ozone_internal.cc b/services/ui/display/screen_manager_ozone_internal.cc
+index 16a90c8..2321721 100644
+--- a/services/ui/display/screen_manager_ozone_internal.cc
++++ b/services/ui/display/screen_manager_ozone_internal.cc
+@@ -164,7 +164,6 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
+   // Configure display manager. ScreenManager acts as an observer to find out
+   // display changes and as a delegate to find out when changes start/stop.
+   display_manager_ = base::MakeUnique<DisplayManager>(std::move(screen_owned_));
+-  display_manager_->InitFromCommandLine();
+   display_manager_->set_configure_displays(true);
+   display_manager_->AddObserver(this);
+   display_manager_->set_delegate(this);
+diff --git a/ui/display/manager/display_manager.cc b/ui/display/manager/display_manager.cc
+index 7d555d2..cc5a73d 100644
+--- a/ui/display/manager/display_manager.cc
++++ b/ui/display/manager/display_manager.cc
+@@ -179,8 +179,20 @@ bool DisplayManager::InitFromCommandLine() {
+ 
+ void DisplayManager::InitDefaultDisplay() {
+   DisplayInfoList info_list;
+-  info_list.push_back(ManagedDisplayInfo::CreateFromSpec(std::string()));
+-  info_list.back().set_native(true);
++  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (command_line->HasSwitch(::switches::kHostWindowBounds)) {
++    const string size_str =
++      command_line->GetSwitchValueASCII(::switches::kHostWindowBounds);
++    for (const std::string& part : base::SplitString(
++           size_str, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
++      info_list.push_back(ManagedDisplayInfo::CreateFromSpec(part));
++      info_list.back().set_native(true);
++    }
++  } else {
++    info_list.push_back(ManagedDisplayInfo::CreateFromSpec(std::string()));
++    info_list.back().set_native(true);
++  }
++
+   MaybeInitInternalDisplay(&info_list[0]);
+   OnNativeDisplaysChanged(info_list);
+ }
+-- 
+2.7.4
+

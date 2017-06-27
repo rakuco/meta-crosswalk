@@ -1,0 +1,28 @@
+From 7c5bfa415e9e0eb4fcbfe963a3243b510f2fa47f Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Fri, 16 Jun 2017 23:46:58 -0700
+Subject: [PATCH 4/9] ozone_demo
+
+---
+ ui/ozone/demo/ozone_demo.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/ui/ozone/demo/ozone_demo.cc b/ui/ozone/demo/ozone_demo.cc
+index 42c08c3..1622dbc 100644
+--- a/ui/ozone/demo/ozone_demo.cc
++++ b/ui/ozone/demo/ozone_demo.cc
+@@ -200,6 +200,11 @@ RendererFactory::~RendererFactory() {
+ 
+ bool RendererFactory::Initialize() {
+   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++
++  ui::OzonePlatform::InitParams params;
++  params.single_process = true;
++  ui::OzonePlatform::InitializeForGPU(params);
++
+   if (!command_line->HasSwitch(kDisableGpu) && gl::init::InitializeGLOneOff() &&
+       gpu_helper_.Initialize(base::ThreadTaskRunnerHandle::Get(),
+                              base::ThreadTaskRunnerHandle::Get())) {
+-- 
+2.7.4
+

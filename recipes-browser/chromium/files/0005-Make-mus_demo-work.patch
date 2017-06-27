@@ -1,0 +1,43 @@
+From f3816289b5d877d026e43f6844fee55bd625cdd1 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Tue, 20 Jun 2017 17:39:57 -0700
+Subject: [PATCH 5/9] Make mus_demo work
+
+---
+ services/ui/demo/BUILD.gn | 13 ++-----------
+ 1 file changed, 2 insertions(+), 11 deletions(-)
+
+diff --git a/services/ui/demo/BUILD.gn b/services/ui/demo/BUILD.gn
+index 7d212e1..d4c36ba 100644
+--- a/services/ui/demo/BUILD.gn
++++ b/services/ui/demo/BUILD.gn
+@@ -17,12 +17,7 @@ source_set("lib") {
+     "window_tree_data.h",
+   ]
+ 
+-  if (use_ozone && !is_chromeos) {
+-    sources += [
+-      "mus_demo_external.cc",
+-      "mus_demo_external.h",
+-    ]
+-  } else {
++  if (use_ozone ) {
+     sources += [
+       "mus_demo_internal.cc",
+       "mus_demo_internal.h",
+@@ -50,11 +45,7 @@ source_set("lib") {
+ }
+ 
+ service("mus_demo") {
+-  if (use_ozone && !is_chromeos) {
+-    sources = [
+-      "main_external.cc",
+-    ]
+-  } else {
++  if (use_ozone) {
+     sources = [
+       "main_internal.cc",
+     ]
+-- 
+2.7.4
+

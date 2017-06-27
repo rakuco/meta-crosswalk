@@ -10,6 +10,16 @@ B = "${S}/${OUTPUT_DIR}"
 SRC_URI += " \
         file://v8-qemu-wrapper.patch \
         file://yocto-bug10635.patch \
+        file://0001-Fix-GN-bootstrap.patch \
+        file://0001-Build-fix-in-dmabuf-support.patch \
+        file://0002-enable-i915-driver.patch \
+        file://0003-Add-CrOS-source-files-for-display-management.patch \
+        file://0004-ozone_demo.patch \
+        file://0005-Make-mus_demo-work.patch \
+        file://0006-Fix-the-display-size-problem.patch \
+        file://0007-Make-it-Work-like-CrOS.patch \
+        file://0008-Add-support-for-ash-host-window-bounds.patch \
+        file://0009-Fix-crash-that-occures-when-handling-mouse-events.patch \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
@@ -24,7 +34,6 @@ COMPATIBLE_MACHINE_x86-64 = "(.*)"
 
 DEPENDS = "\
     alsa-lib \
-    atk \
     bison-native \
     dbus \
     expat \
@@ -34,21 +43,11 @@ DEPENDS = "\
     glib-2.0 \
     gn-native \
     gperf-native \
-    gtk+ \
     harfbuzz \
+    hicolor-icon-theme \
     jpeg \
     libwebp \
-    libx11 \
-    libxcomposite \
-    libxcursor \
-    libxdamage \
-    libxext \
-    libxfixes \
-    libxi \
     libxml2 \
-    libxrandr \
-    libxrender \
-    libxscrnsaver \
     libxslt \
     libxtst \
     ninja-native \
@@ -84,7 +83,7 @@ PACKAGECONFIG[proprietary-codecs] = '\
 # testing.
 PACKAGECONFIG[root-profile] = ",,,"
 # webrtc: Whether to build Chromium with support for WebRTC.
-PACKAGECONFIG[webrtc] = "enable_werbtc=true,enable_webrtc=false"
+PACKAGECONFIG[webrtc] = "enable_webrtc=true,enable_webrtc=false"
 
 # Base GN arguments, mostly related to features we want to enable or disable.
 GN_ARGS = "\
@@ -161,6 +160,19 @@ GN_ARGS += "allow_posix_link_time_opt=false"
 # production.
 # See https://groups.google.com/a/chromium.org/d/msg/chromium-packagers/ECWC57W7E0k/9Kc5UAmyDAAJ
 GN_ARGS += "fieldtrial_testing_like_official_build=true"
+
+# Enable ozone_gbm
+GN_ARGS += "use_ozone=true"
+GN_ARGS += "ozone_platform_gbm=true"
+GN_ARGS += "ozone_platform_x11=false"
+GN_ARGS += "ozone_platform_wayland=false"
+
+# Enable ozone-gbm only
+GN_ARGS += "ozone_auto_platforms=false"
+
+# Mash support
+GN_ARGS += "enable_package_mash_services = true"
+
 
 # API keys for accessing Google services. By default, we use an invalid key
 # only to prevent the "you are missing an API key" infobar from being shown on
@@ -259,7 +271,7 @@ do_configure() {
 }
 
 do_compile() {
-	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox
+    DRV_I915=1 ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox ozone_demo gbm_unittests mash:all mus_demo
 }
 
 do_install() {
@@ -297,7 +309,13 @@ do_install() {
 	ln -s ${libdir}/chromium/chromium-wrapper ${D}${bindir}/chromium
 
 	install -m 4755 chrome_sandbox ${D}${libdir}/chromium/chrome-sandbox
-	install -m 0755 chrome ${D}${libdir}/chromium/chromium-bin
+	install -m 0755 chrome ${D}${libdir}/chromium
+	install -m 0755 ozone_demo ${D}${libdir}/chromium
+	install -m 0755 mash ${D}${libdir}/chromium
+	install -m 0755 *.service ${D}${libdir}/chromium
+	install -m 0644 *.json ${D}${libdir}/chromium
+	install -m 0644 *.pak ${D}${libdir}/chromium
+    install -m 0644 *.so ${D}${libdir}/chromium/
 	install -m 0644 *.bin ${D}${libdir}/chromium/
 	install -m 0644 chrome_*.pak ${D}${libdir}/chromium/
 	install -m 0644 icudtl.dat ${D}${libdir}/chromium/icudtl.dat
