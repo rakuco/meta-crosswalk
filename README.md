@@ -133,6 +133,12 @@ EXTERNALSRC_pn-chromium = "/home/joone/otc/chromium/src"
 
 ## Tips
 
+## Proxy suooirt
+When mash or chrome launches, we can pass a proxy auto-config (PAC) file as runtime parameter as follow:
+```
+--proxy-pac-url=URL
+```
+
 ### Add truetype fonts
 This is a temporary solution.
 ```
