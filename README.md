@@ -133,6 +133,18 @@ EXTERNALSRC_pn-chromium = "/home/joone/otc/chromium/src"
 
 ## Tips
 
+### Add truetype fonts
+This is a temporary solution.
+```
+$ cd  ~yocto/poky/build/tmp/deploy/rpm 
+$ rpm -ifvh corei7_64/fontconfig-utils-2.12.1-r0.corei7_64.rpm
+$ rpm -ifvh noarch/ttf*
+```
+If there are not ttf rpm packages, build them as follows:
+```
+$ bitbake ttf-dejavu
+$ bitbake ttf-hunkyfonts
+```
 ### Find the build files
 ```
 $ cd ~yocto/poky/build/tmp/work/core2-64-poky-linux/chromium/58.0.3029.110-r0/chromium-58.0.3029.110/out/Release
