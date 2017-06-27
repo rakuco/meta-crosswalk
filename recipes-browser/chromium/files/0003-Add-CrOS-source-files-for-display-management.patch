@@ -1,7 +1,7 @@
 From 2df6c619b1dd6feddf6032a4a1df16551b55e677 Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Fri, 16 Jun 2017 23:44:32 -0700
-Subject: [PATCH 1/7] Add CrOS source files for display management
+Subject: [PATCH 3/9] Add CrOS source files for display management
 
 ---
  services/ui/demo/BUILD.gn                          |    1 +

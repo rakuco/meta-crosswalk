@@ -1,7 +1,7 @@
 From f3816289b5d877d026e43f6844fee55bd625cdd1 Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Tue, 20 Jun 2017 17:39:57 -0700
-Subject: [PATCH 3/7] Make mus_demo work
+Subject: [PATCH 5/9] Make mus_demo work
 
 ---
  services/ui/demo/BUILD.gn | 13 ++-----------

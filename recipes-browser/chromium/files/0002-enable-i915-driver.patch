@@ -1,8 +1,12 @@
-commit 991e8fee04af202ca593016f99130e07f671e418
-Author: Joone Hur <joone.hur@intel.com>
-Date:   Wed Jun 7 15:07:44 2017 -0700
+From d4a70590c3b4f51fe02f7777662107ff301aeb20 Mon Sep 17 00:00:00 2001
+From: Joone Hur <joone.hur@intel.com>
+Date: Wed, 7 Jun 2017 15:07:44 -0700
+Subject: [PATCH 2/9] enable i915 driver
 
-    enable i915 driver
+---
+ third_party/libdrm/BUILD.gn  | 7 +++++++
+ third_party/minigbm/BUILD.gn | 1 +
+ 2 files changed, 8 insertions(+)
 
 diff --git a/third_party/libdrm/BUILD.gn b/third_party/libdrm/BUILD.gn
 index 7f040070..4b15a48 100644
@@ -45,3 +49,6 @@ index 806e12f..4027603 100644
    }
  
    shared_library("minigbm") {
+-- 
+2.7.4
+

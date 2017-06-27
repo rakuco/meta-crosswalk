@@ -1,14 +1,15 @@
-From b0cb1823fa18fe3ff9570211878646bee5b2239b Mon Sep 17 00:00:00 2001
+From 4d8a9f413f0d1d7c17ddf17b86e79b18a0961ac5 Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Tue, 20 Jun 2017 17:45:41 -0700
-Subject: [PATCH 4/7] Fix the display size problem
+Subject: [PATCH 6/9] Fix the display size problem
 
+Set the default host window size to 1920x1080
 ---
  ui/display/manager/managed_display_info.cc | 8 ++++----
- 1 files changed, 4 insertions(+), 4 deletions(-)
+ 1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/ui/display/manager/managed_display_info.cc b/ui/display/manager/managed_display_info.cc
-index bf3d276..78d2aa4 100644
+index bf3d276..e668880 100644
 --- a/ui/display/manager/managed_display_info.cc
 +++ b/ui/display/manager/managed_display_info.cc
 @@ -176,10 +176,10 @@ ManagedDisplayInfo ManagedDisplayInfo::CreateFromSpecWithID(
@@ -21,8 +22,8 @@ index bf3d276..78d2aa4 100644
 -  const int kDefaultHostWindowHeight = 768;
 +  const int kDefaultHostWindowX = 0;
 +  const int kDefaultHostWindowY = 0;
-+  const int kDefaultHostWindowWidth = 2160;
-+  const int kDefaultHostWindowHeight = 1440;
++  const int kDefaultHostWindowWidth = 1920;
++  const int kDefaultHostWindowHeight = 1080;
    gfx::Rect bounds_in_native(kDefaultHostWindowX, kDefaultHostWindowY,
                               kDefaultHostWindowWidth, kDefaultHostWindowHeight);
  #endif

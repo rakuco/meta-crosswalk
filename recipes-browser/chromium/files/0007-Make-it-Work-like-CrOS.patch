@@ -1,7 +1,7 @@
-From 48993b04ad1936160ab3401e80813f708a849b4c Mon Sep 17 00:00:00 2001
+From 68040b5398c743cc26f835455902a01c94f2a1c6 Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Tue, 20 Jun 2017 17:47:42 -0700
-Subject: [PATCH 5/7] Make it Work like CrOS
+Subject: [PATCH 7/9] Make it Work like CrOS
 
 ---
  ui/display/manager/display_manager.cc | 12 ++++++------

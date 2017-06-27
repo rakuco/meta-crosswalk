@@ -1,7 +1,7 @@
-From 29af09e9248e5efadddbe244acca0b7900110e24 Mon Sep 17 00:00:00 2001
+From b8553106a9752de216a3e72857630a01f069e34d Mon Sep 17 00:00:00 2001
 From: Joone Hur <joone.hur@intel.com>
 Date: Fri, 23 Jun 2017 18:26:01 -0700
-Subject: [PATCH 6/7] Add support for --ash-host-window-bounds
+Subject: [PATCH 8/9] Add support for --ash-host-window-bounds
 
 This allows us to set the display size at runtime as follows:
 $ ./mash --service=mash_session  --no-sandbox --window-manager=simple_wm --ash-host-window-bounds=2160x1440
