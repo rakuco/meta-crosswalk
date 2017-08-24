@@ -124,6 +124,8 @@ GN_ARGS += "is_debug=false is_official_build=true"
 #    not cause any issues if DEBUG_BUILD is set, as -g1 will be passed later.
 DEBUG_FLAGS_remove_i586 = "-g"
 DEBUG_FLAGS_append_i586 = "-g1"
+DEBUG_FLAGS_remove_x86-64 = "-g"
+DEBUG_FLAGS_append_x86-64 = "-g1"
 DEBUG_FLAGS_remove_armv6 = "-g"
 DEBUG_FLAGS_append_armv6 = "-g1"
 DEBUG_FLAGS_remove_armv7a = "-g"
