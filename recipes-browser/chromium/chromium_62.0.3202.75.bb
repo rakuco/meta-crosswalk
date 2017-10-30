@@ -16,6 +16,7 @@ SRC_URI += " \
         file://0001-WebCORS-Use-WebString-directly-instead-of-converting.patch \
         file://0001-More-conservative-check-for-string_view-availability.patch \
         file://0001-Revert-Disable-desktop-capture-when-WebRTC-is-disabl.patch \
+        file://chromium-gcc5-cxx14-workaround.patch \
         file://chromium-gcc5-workarounds.patch \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
