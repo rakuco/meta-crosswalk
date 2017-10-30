@@ -319,7 +319,6 @@ do_install() {
 	install -d ${D}${datadir}/icons/hicolor
 	install -d ${D}${libdir}/chromium
 	install -d ${D}${libdir}/chromium/locales
-	install -d ${D}${libdir}/chromium/swiftshader
 
 	# Process and install Chromium's template .desktop file.
 	sed -e "s,@@MENUNAME@@,Chromium Browser,g" \
@@ -355,8 +354,12 @@ do_install() {
 
 	install -m 0644 locales/*.pak ${D}${libdir}/chromium/locales/
 
-	install -m 0644 swiftshader/libEGL.so ${D}${libdir}/chromium/swiftshader/
-	install -m 0644 swiftshader/libGLESv2.so ${D}${libdir}/chromium/swiftshader/
+	# Swiftshader is only built for x86 and x86-64.
+	if [ -d "swiftshader" ]; then
+		install -d ${D}${libdir}/chromium/swiftshader
+		install -m 0644 swiftshader/libEGL.so ${D}${libdir}/chromium/swiftshader/
+		install -m 0644 swiftshader/libGLESv2.so ${D}${libdir}/chromium/swiftshader/
+	fi
 }
 
 FILES_${PN} = " \
