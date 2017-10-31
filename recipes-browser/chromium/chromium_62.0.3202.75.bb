@@ -367,7 +367,6 @@ FILES_${PN} = " \
         ${datadir}/icons/hicolor/*x*/apps/chromium.png \
         ${libdir}/${PN}/* \
         "
-FILES_${PN}-dbg = "${libdir}/${PN}/.debug/"
 PACKAGE_DEBUG_SPLIT_STYLE = "debug-without-src"
 
 # There is no need to ship empty -dev packages.
