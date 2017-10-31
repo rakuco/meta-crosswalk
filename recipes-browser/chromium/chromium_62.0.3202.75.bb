@@ -2,7 +2,7 @@ require chromium.inc
 require chromium-unbundle.inc
 require gn-utils.inc
 
-inherit gtk-icon-cache qemu
+inherit distro_features_check gtk-icon-cache qemu
 
 OUTPUT_DIR = "out/Release"
 B = "${S}/${OUTPUT_DIR}"
@@ -75,6 +75,9 @@ DEPENDS_append_x86-64 = "yasm-native"
 
 # The wrapper script we use from upstream requires bash.
 RDEPENDS_${PN} = "bash"
+
+# For now, we need X11 for Chromium to build and run.
+REQUIRED_DISTRO_FEATURES = "x11"
 
 PACKAGECONFIG ??= "ftp webrtc"
 # ftp: Whether to build Chromium with support for the FTP protocol.
