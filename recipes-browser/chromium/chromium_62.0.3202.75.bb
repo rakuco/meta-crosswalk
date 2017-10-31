@@ -21,8 +21,6 @@ SRC_URI += " \
         ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
-# At the moment, this recipe has only been tested on i586, x86-64, ARMv6,
-# ARMv7a and aarch64.
 COMPATIBLE_MACHINE = "(-)"
 COMPATIBLE_MACHINE_aarch64 = "(.*)"
 COMPATIBLE_MACHINE_armv6 = "(.*)"
