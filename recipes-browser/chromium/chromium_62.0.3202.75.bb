@@ -307,7 +307,7 @@ do_configure() {
 }
 
 do_compile() {
-	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox
+	ninja -v "${PARALLEL_MAKE}" chrome chrome_sandbox chromedriver
 }
 
 do_install() {
@@ -359,7 +359,12 @@ do_install() {
 		install -m 0644 swiftshader/libEGL.so ${D}${libdir}/chromium/swiftshader/
 		install -m 0644 swiftshader/libGLESv2.so ${D}${libdir}/chromium/swiftshader/
 	fi
+
+	# ChromeDriver.
+	install -m 0755 chromedriver ${D}${bindir}/chromedriver
 }
+
+PACKAGES += "${PN}-chromedriver"
 
 FILES_${PN} = " \
         ${bindir}/${PN} \
@@ -367,6 +372,7 @@ FILES_${PN} = " \
         ${datadir}/icons/hicolor/*x*/apps/chromium.png \
         ${libdir}/${PN}/* \
         "
+FILES_${PN}-chromedriver = "${bindir}/chromedriver"
 PACKAGE_DEBUG_SPLIT_STYLE = "debug-without-src"
 
 # There is no need to ship empty -dev packages.
