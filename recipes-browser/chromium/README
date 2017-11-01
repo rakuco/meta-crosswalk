@@ -26,9 +26,7 @@ The "proprietary-codecs" PACKAGECONFIG option builds Chromium with support for
 non-free multimedia codecs, such as H.264 and others. It is your responsibility
 to make sure you are complying with the codecs' licensing terms.
 
-The "root-profile" PACKAGECONFIG adds a small patch to the Chromium binary
-wrapper that allows the web browser to run as root without the need to use the
---user-data-dir command-line option.
-Its only purpose is to aid testing and debugging when adding Chromium to an
-image such as core-image-sato, where root is the only user by default.
-This option (which is disabled by default) is NOT RECOMMENDED in production.
+Note: by default, Chromium will refuse to execute if run as root. During
+testing, one can bypass the check by passing "--no-sandbox" to the chromium
+binary. In production, one should NEVER run Chromium as root, but rather use a
+separate, unprivileged user instead.

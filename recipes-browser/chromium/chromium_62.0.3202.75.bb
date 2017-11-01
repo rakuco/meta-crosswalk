@@ -18,7 +18,6 @@ SRC_URI += " \
         file://0001-Revert-Disable-desktop-capture-when-WebRTC-is-disabl.patch \
         file://chromium-gcc5-cxx14-workaround.patch \
         file://chromium-gcc5-workarounds.patch \
-        ${@bb.utils.contains('PACKAGECONFIG', 'root-profile', 'file://root-user-profile.patch', '', d)} \
         "
 
 COMPATIBLE_MACHINE = "(-)"
@@ -89,11 +88,6 @@ PACKAGECONFIG[proprietary-codecs] = '\
         ffmpeg_branding="Chrome" proprietary_codecs=true, \
         ffmpeg_branding="Chromium" proprietary_codecs=false \
         '
-# root-profile: If enabled, adds a patch to the Chromium binary wrapper that
-# automatically sets root's user profile directory to /root/chromium-profile.
-# DO NOT USE IN PRODUCTION: this is only supposed to ease debugging and
-# testing.
-PACKAGECONFIG[root-profile] = ",,,"
 # webrtc: Whether to build Chromium with support for WebRTC.
 PACKAGECONFIG[webrtc] = "enable_webrtc=true,enable_webrtc=false"
 
