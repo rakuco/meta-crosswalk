@@ -1,3 +1,6 @@
+Chromium recipe
+===============
+
 This recipe provides a package for the Chromium web browser. It strives to
 always follow the latest stable Linux release as listed in
 https://omahaproxy.appspot.com
@@ -30,3 +33,18 @@ Note: by default, Chromium will refuse to execute if run as root. During
 testing, one can bypass the check by passing "--no-sandbox" to the chromium
 binary. In production, one should NEVER run Chromium as root, but rather use a
 separate, unprivileged user instead.
+
+Google API keys
+---------------
+Some Chromium features use Google APIs, and to access those APIs either an API
+Key or a set of OAuth 2.0 tokens is required. Setting up API keys is optional.
+
+If you don't do it, the specific APIs using Google services won't work in your
+build, but all other features will run normally.
+
+By default, we build Chromium with invalid keys to avoid the "Google API keys
+are missing" error message in the browser's infobar. If you have your own API
+keys, you need to set the GOOGLE_API_KEY, GOOGLE_DEFAULT_CLIENT_ID and
+GOOGLE_DEFAULT_CLIENT_SECRET appropriately in your local.conf.
+
+For more information, see https://dev.chromium.org/developers/how-tos/api-keys.
