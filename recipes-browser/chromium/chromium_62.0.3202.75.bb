@@ -28,7 +28,9 @@ COMPATIBLE_MACHINE_armv7ve = "(.*)"
 COMPATIBLE_MACHINE_x86 = "(.*)"
 COMPATIBLE_MACHINE_x86-64 = "(.*)"
 
-DEPENDS = "\
+# Append instead of assigning; the gtk-icon-cache class inherited above also
+# adds packages to DEPENDS.
+DEPENDS += "\
     alsa-lib \
     atk \
     bison-native \
