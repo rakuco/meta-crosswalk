@@ -324,12 +324,16 @@ do_install() {
 	install -m 0644 chromium.desktop ${D}${datadir}/applications
 
 	# Install icons.
-	for size in 22 24 48 64 128 256; do
+	for size in 16 22 24 32 48 64 128 256; do
 		install -d ${D}${datadir}/icons/hicolor/${size}x${size}
 		install -d ${D}${datadir}/icons/hicolor/${size}x${size}/apps
-		install -m 0644 \
-			${S}/chrome/app/theme/chromium/product_logo_${size}.png \
-			${D}${datadir}/icons/hicolor/${size}x${size}/apps/chromium.png
+		for dirname in "chromium" "default_100_percent/chromium"; do
+			icon="${S}/chrome/app/theme/${dirname}/product_logo_${size}.png"
+			if [ -f "${icon}" ]; then
+				install -m 0644 "${icon}" \
+					${D}${datadir}/icons/hicolor/${size}x${size}/apps/chromium.png
+			fi
+		done
 	done
 
 	# A wrapper for the proprietary Google Chrome version already exists.
