@@ -34,6 +34,7 @@ DEPENDS += "\
     alsa-lib \
     atk \
     bison-native \
+    cairo \
     dbus \
     expat \
     flac \
@@ -44,6 +45,7 @@ DEPENDS += "\
     gperf-native \
     gtk+3 \
     jpeg \
+    libdrm \
     libwebp \
     libx11 \
     libxcomposite \
